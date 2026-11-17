@@ -5,6 +5,71 @@ models and agents, and the shared gateway policy every use case runs through (ki
 routing). Use cases (their Foundry projects, model access and agents) are onboarded and deployed from the project
 repository, **[agent-deployment](https://github.com/DeepuMM/agent-deployment)**.
 
+## Pipelines
+
+Two GitHub Actions pipelines plus the platform stack, all signed in to Azure with GitHub OIDC (no secrets) except the
+platform stack, which a platform engineer applies.
+
+### 1. `model-platform-deployment`: host a model
+
+| | |
+|---|---|
+| **What it does** | For each model under `gateway/foundry-accounts/<account>/models/<model>/`: deploys it in its hosting Foundry account (version, SKU, capacity) with its **guardrail**, then registers it on the gateway: APIM **backend** to the deployment, **registry entry** `model-meta-<model>` (what the project repository reads), **kill switch** `ks-model-<model>` (created `active` once, never reset), and the `platform-models` **product with the model catalog**. Smoke test (deployment healthy, backend registered, kill switch set), then publishes the Developer Portal. |
+| **Runs** | pull request touching `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` or `platform/environments/**`: checks and plan; merge to `main`: plan, approval, apply, smoke test; on demand |
+| **Stops before any change when** | a model's name differs from its folder, its format isn't allowed in its account, `api` or `status` is invalid |
+| **Terraform** | `gateway/terraform/platform-deployment`, state `ai-gateway-models-<env>.tfstate` |
+
+### 2. `gateway-policy-deployment`: the shared gateway policy
+
+| | |
+|---|---|
+| **What it does** | Deploys the **policy fragments** in `gateway/policy-fragments/` (kill switches, limits, routing, identity check, content safety) that every project's agent API and model API include, the **global kill switch** `ks-gateway-all` (created `active` once), the named value `gateway-tenant-id`, and the **Content Safety backend** `content-safety` (managed identity). A change reaches every project at once, with no project redeployed. Gateway smoke test: every fragment is on the gateway, the global kill switch state, the model registry. |
+| **Runs** | pull request touching `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` or `platform/environments/**`: checks and plan; merge to `main`: plan, approval, apply, smoke test, for **every** environment; on demand |
+| **Stops before any change when** | a fragment file's root isn't `<fragment>`, the environment file has no `gateway.content_safety`, or APIM rejects the XML |
+| **Terraform** | `gateway/terraform/gateway-policies`, state `ai-gateway-policies-<env>.tfstate` |
+
+### 3. Platform stack (`gateway/sandbox`, applied by a platform engineer)
+
+Creates the platform an environment runs on: APIM, the Foundry accounts for models and for agents, the Azure AI
+Content Safety account, Terraform state storage, the pipeline identity with its roles and its GitHub trust (for both
+repositories), and APIM's own roles. Local state; see [gateway/sandbox/README.md](gateway/sandbox/README.md). Its
+output `environment_file` is `platform/environments/<env>.yaml`.
+
+### Variables
+
+Set per GitHub environment (`sandbox`; test: `model-test`), as **variables**, not secrets:
+
+| Variable | Used by | Value (sandbox) |
+|---|---|---|
+| `AZURE_CLIENT_ID` | both pipelines | client ID of the pipeline identity `id-sbx-pipeline` |
+| `AZURE_TENANT_ID` | both pipelines | the platform tenant |
+| `AZURE_SUBSCRIPTION_ID` | both pipelines | the subscription of APIM and the Foundry accounts |
+
+Repository variable: `MODEL_ENVIRONMENTS`, the environments the pipelines may run in (`sandbox`).
+
+Everything else comes from `platform/environments/<env>.yaml`: the APIM name and resource group (gateway URL
+`https://<apim_name>.azure-api.net`), the agent Foundry account, the Content Safety account, the tenant, the Terraform
+state storage. Hosting accounts are the folders under `gateway/foundry-accounts/` (`account.yaml`).
+
+### Permissions
+
+| Who | Role | Scope | For |
+|---|---|---|---|
+| Pipeline identity | **Foundry Account Owner** | each hosting Foundry account | model deployments and guardrails |
+| | **API Management Service Contributor** | the APIM instance | backends, named values, fragments, products, portal |
+| | **Reader** | the Content Safety account | lookup for the backend |
+| | **Storage Blob Data Contributor** | the Terraform state container | state |
+| | Federated credential | the identity, trusting `repo:<owner>@<id>/ai-gateway@<id>:environment:<env>` | GitHub OIDC sign-in |
+| APIM managed identity (runtime) | **Foundry User** | each hosting account and the agent account | call the models and the agents |
+| | **Cognitive Services User** | the Content Safety account | prompt checks |
+| Platform engineer (platform stack) | Owner, or Contributor + Role Based Access Control Administrator | the platform resource group | create resources and role assignments |
+
+Step-by-step flows, triggers and validation of both pipelines: [gateway/README.md](gateway/README.md).
+
+The project repository's pipelines use the same pipeline identity with further roles on the agent account (see its
+README). In the sandbox, `id-sbx-pipeline` has Contributor on the resource group, which covers the Contributor-level
+rows.
+
 ## Two repositories
 
 | | **ai-gateway**, this repository (platform team) | **agent-deployment** (use-case teams) |
@@ -17,16 +82,6 @@ repository, **[agent-deployment](https://github.com/DeepuMM/agent-deployment)**.
 
 The project repository never reads this repository's files: it reads what the gateway serves (the model registry
 `model-meta-*`, the policy fragments) from APIM and stops with a clear message when something is missing.
-
-## Pipelines
-
-| Pipeline | Trigger | What it does |
-|---|---|---|
-| Platform (`gateway/sandbox`, Terraform, run by the platform team) | platform change | APIM, Foundry accounts (models, agents), Content Safety, pipeline identity and its GitHub trust, APIM's roles |
-| `model-platform-deployment` | `gateway/foundry-accounts/**` | deploys each model with its guardrail, registers it on the gateway (backend, registry entry, kill switch), product and catalog; smoke test |
-| `gateway-policy-deployment` | `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` | the shared policy fragments, global kill switch `ks-gateway-all`, `gateway-tenant-id`, Content Safety backend; to every environment; gateway smoke test |
-
-Details of the model pipelines: [gateway/README.md](gateway/README.md).
 
 ## AI gateway (APIM) structure
 
