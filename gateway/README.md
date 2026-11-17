@@ -89,7 +89,7 @@ flowchart TD
 | Checks | Terraform format, validate, plan tests with mocked Azure | a file is badly formatted or a test fails |
 | Environments to run | one run per platform environment of the changed hosting accounts (`account.yaml`), only if listed in `MODEL_ENVIRONMENTS` | — (nothing to run: the job is skipped) |
 | Sign in + init | GitHub OIDC as the environment's pipeline identity; Terraform state in the environment's storage | the identity or its federated credential is missing |
-| Plan | computes the changes and validates every `model.yaml` | a name, format, `api` or `status` is invalid |
+| Plan | computes the changes and checks every `model.yaml` | does not fail on a bad `model.yaml` today: the checks only warn (see Validation) |
 | Apply | deploys or updates each model in its hosting account; creates or updates its backend, registry entry, kill switch (only created, never re-enabled) and the product with the catalog | Azure refuses (quota, permissions) |
 | Smoke test | reads the registry back from APIM and checks each model's deployment, backend and kill switch | a deployment isn't `Succeeded`, a backend is missing |
 | Portal | publishes the Developer Portal | the portal is disabled on the APIM instance |
@@ -181,7 +181,10 @@ into an agent account.
 | Kill switch | named value `ks-model-<model>` | created `active`; later changes are never overwritten by an apply |
 | Product | `platform-models` (from the environment file) | catalog of every model in its description; visible to the Developers group; every project's model API is added to it |
 
-### Validation (fails the plan before anything changes)
+### Validation (warnings in the plan, not yet blocking)
+
+The plan checks each model's definition, but these checks are a Terraform `check` block: they show a warning and the
+run continues. Review the plan's warnings on the pull request.
 
 - `model.yaml` `name` equals its folder name; names are lowercase letters, digits, dots and hyphens.
 - The model's format is one of its hosting account's `formats`.

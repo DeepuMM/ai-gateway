@@ -16,7 +16,7 @@ platform stack, which a platform engineer applies.
 |---|---|
 | **What it does** | For each model under `gateway/foundry-accounts/<account>/models/<model>/`: deploys it in its hosting Foundry account (version, SKU, capacity) with its **guardrail**, then registers it on the gateway: APIM **backend** to the deployment, **registry entry** `model-meta-<model>` (what the project repository reads), **kill switch** `ks-model-<model>` (created `active` once, never reset), and the `platform-models` **product with the model catalog**. Smoke test (deployment healthy, backend registered, kill switch set), then publishes the Developer Portal. |
 | **Runs** | pull request touching `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` or `platform/environments/**`: checks and plan; merge to `main`: plan, approval, apply, smoke test; on demand |
-| **Stops before any change when** | a model's name differs from its folder, its format isn't allowed in its account, `api` or `status` is invalid |
+| **When the run fails** | During the apply, if Azure refuses a deployment (for example no quota or no permission). The plan also checks each model's definition (name the same as its folder, format allowed in its hosting account, `api` and `status` valid), but today these checks only **warn** and do not stop the run. |
 | **Terraform** | `gateway/terraform/platform-deployment`, state `ai-gateway-models-<env>.tfstate` |
 
 ### 2. `gateway-policy-deployment`: the shared gateway policy
@@ -25,7 +25,7 @@ platform stack, which a platform engineer applies.
 |---|---|
 | **What it does** | Deploys the **policy fragments** in `gateway/policy-fragments/` (kill switches, limits, routing, identity check, content safety) that every project's agent API and model API include, the **global kill switch** `ks-gateway-all` (created `active` once), the named value `gateway-tenant-id`, and the **Content Safety backend** `content-safety` (managed identity). A change reaches every project at once, with no project redeployed. Gateway smoke test: every fragment is on the gateway, the global kill switch state, the model registry. |
 | **Runs** | pull request touching `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` or `platform/environments/**`: checks and plan; merge to `main`: plan, approval, apply, smoke test, for **every** environment; on demand |
-| **Stops before any change when** | a fragment file's root isn't `<fragment>`, the environment file has no `gateway.content_safety`, or APIM rejects the XML |
+| **When the run fails** | **In the plan, so nothing has changed yet:** a fragment file doesn't start with `<fragment>`, or the environment file has no `gateway.content_safety`. **During the apply:** APIM refuses a fragment because its policy is invalid. Fragments applied before it in that run stay; fix the file and run again. |
 | **Terraform** | `gateway/terraform/gateway-policies`, state `ai-gateway-policies-<env>.tfstate` |
 
 ### 3. Platform stack (`gateway/sandbox`, applied by a platform engineer)
