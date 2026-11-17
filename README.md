@@ -45,7 +45,7 @@ Set per GitHub environment (`sandbox`; test: `model-test`), as **variables**, no
 | `AZURE_TENANT_ID` | both pipelines | the platform tenant |
 | `AZURE_SUBSCRIPTION_ID` | both pipelines | the subscription of APIM and the Foundry accounts |
 
-Repository variable: `MODEL_ENVIRONMENTS`, the environments the pipelines may run in (`sandbox`).
+Repository variable: `MODEL_ENVIRONMENTS`, the environments the pipelines may run in (`sandbox,test`).
 
 Everything else comes from `platform/environments/<env>.yaml`: the APIM name and resource group (gateway URL
 `https://<apim_name>.azure-api.net`), the agent Foundry account, the Content Safety account, the tenant, the Terraform
@@ -492,11 +492,22 @@ The change reaches the gateway within seconds. Anyone who can edit the APIM inst
 Each run targets one platform environment through the GitHub environment of the same name (`sandbox`; test:
 `model-test`), whose variables hold the pipeline identity (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
 `AZURE_SUBSCRIPTION_ID`, GitHub OIDC, no secrets). The repository variable `MODEL_ENVIRONMENTS` lists the environments
-the pipelines may run in (`sandbox`). In the sandbox, one pipeline identity (`id-sbx-pipeline`) trusts both
-repositories' `sandbox` environments.
+the pipelines may run in (`sandbox,test`). In each environment one pipeline identity trusts both repositories.
 
-The test environment (`scbx-testing`, gateway `apim-agents-3471ad`) is not used at the moment: its gateway is
-suspended and has no shared policy fragments.
+| | sandbox | test |
+|---|---|---|
+| Subscription | Visual Studio Professional (`8c85e375…`) | `scbx-testing` (`3471ad5a…`) |
+| Gateway (APIM) | `apim-sbx-bbf0o` | `apim-agents-3471ad` |
+| Model-hosting Foundry account (models only) | `aif-sbx-models-bbf0o` | `aif-tst-models-3471ad` |
+| Agent Foundry account (projects only) | `aif-sbx-agents-bbf0o` | `az-aif-tst-model-npr-01` |
+| Content Safety | `cs-sbx-bbf0o` | `cs-tst-3471ad` |
+| Pipeline identity | `id-sbx-pipeline` | `id-promptops-pipeline` |
+| GitHub environment | `sandbox` | `model-test` |
+| Projects | none (gateway only) | `models-demo`, `proj-default` |
+
+Models and agents are in separate Foundry accounts, so the only way an agent reaches a model is the gateway. In test
+the agent account still holds deployments made before the platform (`gpt-5.4-mini`, `gpt-6.1-sol`,
+`text-embedding-3-small`); the platform doesn't manage them and no project uses them.
 
 ## Run locally
 
