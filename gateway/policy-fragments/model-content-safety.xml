@@ -9,9 +9,23 @@
        model's models.allowed[].content_safety, else the project's models.content_safety. A setting neither passes
        uses the platform default here: severity 4 for each category, Prompt Shields on. Settings can only be stricter
        (validated by agent-ci and the model-project-connection plan).
+       Only the LATEST USER MESSAGE is checked: llm-content-safety joins all messages into one text, and Foundry puts a
+       developer message ahead of every agent call ("You are an AI assistant accessed via an API..."); joined with it,
+       Content Safety rates even a severity-5 prompt 0, so nothing was ever blocked. The fragment therefore saves the
+       request, cuts the body down to the last user message for the check, and restores the full request afterwards.
+       Earlier turns were checked when they were sent.
        A blocked prompt gets 403 and never reaches the model, so it uses no tokens. Runs after the kill switches and the
        allowed-model check, so suspended or refused calls cost no Content Safety call. The model deployment's own
        guardrail (model.yaml guardrail) still applies too, including to the model's answers. -->
+  <set-variable name="cs-original-body" value="@(context.Request.Body.As&lt;string&gt;(true))" />
+  <set-body>@{
+    var request = JObject.Parse((string)context.Variables["cs-original-body"]);
+    var messages = request["messages"] as JArray ?? new JArray();
+    var lastUser = messages.LastOrDefault(m => (string)m["role"] == "user");
+    var check = new JObject();
+    check["messages"] = lastUser == null ? new JArray() : new JArray(lastUser.DeepClone());
+    return check.ToString();
+  }</set-body>
   <llm-content-safety backend-id="content-safety" shield-prompt="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cs-prompt-shields&quot;, true))">
     <categories output-type="EightSeverityLevels">
       <category name="Hate" threshold="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;cs-hate&quot;, 4))" />
@@ -20,4 +34,6 @@
       <category name="Violence" threshold="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;cs-violence&quot;, 4))" />
     </categories>
   </llm-content-safety>
+  <!-- The model gets the full request (instructions, history, tools), not the cut-down copy that was checked. -->
+  <set-body>@((string)context.Variables["cs-original-body"])</set-body>
 </fragment>
