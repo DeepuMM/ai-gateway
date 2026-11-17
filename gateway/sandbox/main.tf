@@ -105,18 +105,13 @@ resource "azurerm_cognitive_account" "agents" {
   }
 }
 
-resource "azapi_resource" "project" {
-  type      = "Microsoft.CognitiveServices/accounts/projects@2025-06-01"
-  name      = "models-demo"
-  parent_id = azurerm_cognitive_account.agents.id
-  location  = azurerm_resource_group.sbx.location
-  identity {
-    type = "SystemAssigned"
+# The Foundry project models-demo was created here at first; it now belongs to the project repository's use-case
+# onboarding (agent-deployment), which creates every project. Forget it here without destroying it.
+removed {
+  from = azapi_resource.project
+  lifecycle {
+    destroy = false
   }
-  body = {
-    properties = { displayName = "Models demo (sandbox)", description = "Agents that use platform models through the gateway" }
-  }
-  response_export_values = ["properties.endpoints"]
 }
 
 resource "azurerm_role_assignment" "me_agents" {
@@ -199,7 +194,6 @@ output "environment_file" {
 }
 
 output "hosting_account" { value = azurerm_cognitive_account.models.name }
-output "project_endpoint" { value = "https://${azurerm_cognitive_account.agents.custom_subdomain_name}.services.ai.azure.com/api/projects/models-demo" }
 
 ## Pipeline identity for the GitHub environment "sandbox" (OIDC, no secrets)
 
@@ -212,6 +206,22 @@ resource "azurerm_user_assigned_identity" "pipeline" {
   name                = "id-sbx-pipeline"
   resource_group_name = azurerm_resource_group.sbx.name
   location            = azurerm_resource_group.sbx.location
+}
+
+variable "gateway_github_oidc_subject" {
+  description = "OIDC subject of the gateway repository's GitHub environment, e.g. repo:<owner>@<id>/ai-gateway@<id>:environment:sandbox"
+  type        = string
+}
+
+# The same pipeline identity serves both repositories: the project repository (github_oidc_subject) and the gateway
+# repository (gateway_github_oidc_subject).
+resource "azurerm_federated_identity_credential" "github_gateway" {
+  name                = "github-sandbox-gateway"
+  resource_group_name = azurerm_resource_group.sbx.name
+  parent_id           = azurerm_user_assigned_identity.pipeline.id
+  issuer              = "https://token.actions.githubusercontent.com"
+  audience            = ["api://AzureADTokenExchange"]
+  subject             = var.gateway_github_oidc_subject
 }
 
 resource "azurerm_federated_identity_credential" "github" {
