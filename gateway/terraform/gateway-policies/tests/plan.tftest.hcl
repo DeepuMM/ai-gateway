@@ -28,7 +28,7 @@ run "deploys_shared_policy_fragments" {
   command = plan
 
   assert {
-    condition = alltrue([for id in ["agent-guardrails", "agent-pin-version", "project-inbound", "project-outbound", "model-api-caller", "model-api-route", "model-content-safety"] :
+    condition = alltrue([for id in ["agent-guardrails", "agent-pin-version", "agent-route-hosted", "project-inbound", "project-outbound", "model-api-caller", "model-api-route", "model-content-safety"] :
     contains(keys(azurerm_api_management_policy_fragment.shared), id)])
     error_message = "Every fragment the policy templates include should be deployed."
   }

@@ -1,0 +1,22 @@
+<fragment>
+  <!-- Shared by every HOSTED (code) agent operation, AFTER <base />, in place of agent-pin-version. Deployed by
+       gateway-policy-deployment (one copy per APIM). A hosted agent is served by its own Foundry endpoint, not by the
+       project's Responses API: /agents/<agent>/endpoint/protocols/openai/responses. The version it serves is pinned in
+       Foundry (the endpoint's version selector, 100% to the evaluated version, set by agent-deploy's register step),
+       because the endpoint accepts no version in the request.
+       Reads the context variable set by templates/agent-operation-policy-hosted.xml:
+         agent-name     value of named value agent-name-<agent> -->
+  <rewrite-uri template="@(&quot;/agents/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;) + &quot;/endpoint/protocols/openai/responses&quot;)" copy-unmatched-params="false" />
+  <set-query-parameter name="api-version" exists-action="override">
+    <value>v1</value>
+  </set-query-parameter>
+  <!-- Callers cannot choose a model or another agent: the agent's code decides the model (through the project's
+       gateway connection), the operation decides the agent. -->
+  <set-body>@{
+    var body = context.Request.Body.As&lt;JObject&gt;(preserveContent: true) ?? new JObject();
+    body.Remove("model");
+    body.Remove("agent_reference");
+    body.Remove("agent");
+    return body.ToString();
+  }</set-body>
+</fragment>
