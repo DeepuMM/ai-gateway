@@ -243,8 +243,10 @@ Each agent operation and project API policy only sets its own values as context 
 | Fragment | Included by | Does |
 |---|---|---|
 | `agent-guardrails` | agent operation policy, before `<base />` | global kill switch `ks-gateway-all` and agent kill switch (503), agent rate limit |
-| `agent-pin-version` | prompt agent operation policy, after `<base />` | fixes `agent_reference` to the evaluated version |
-| `agent-route-hosted` | hosted (code) agent operation policy, after `<base />` | routes to the agent's own endpoint `/agents/<agent>/endpoint/protocols/openai/responses`; strips `model` and `agent_reference` (the version is pinned in Foundry by the endpoint's version selector) |
+| `agent-caller` | agent operation policy, before `<base />` | validates the caller's Entra token (the one it would send to Foundry: audience `https://ai.azure.com`, this tenant); keeps its object ID; removes caller-sent `x-ms-user-identity` / `x-ms-user-isolation-key` |
+| `agent-route` | agent operation policy, after `<base />` | **transparent route**: the caller's Foundry path after `/<project path>/<agent>/` goes to the agent's Foundry endpoint with body, query string and headers unchanged. Hosted: `endpoint/...` only, `x-ms-user-identity` = caller (per-caller sessions), new sessions bound to the evaluated version. Prompt: `openai/v1/responses` and `openai/v1/conversations` only, `agent_reference` = evaluated version. Anything else: `404 AGENT_PATH_NOT_ALLOWED` |
+| `agent-pin-version` | (being retired) old prompt agent route `POST /<agent>/responses` | fixes `agent_reference` to the evaluated version |
+| `agent-route-hosted` | (being retired) old hosted route | routes to the agent's own endpoint `/agents/<agent>/endpoint/protocols/openai/responses`; strips `model` and `agent_reference` (the version is pinned in Foundry by the endpoint's version selector) |
 | `project-inbound` | project API policy | project rate limit, correlation ID, Responses API, managed identity |
 | `project-outbound` | project API policy, project model API policy | correlation ID on the response |
 | `model-api-caller` | project model API policy (project repository's use-case onboarding) | only the project's Foundry identity (token claim `xms_mirid`; tenant from named value `gateway-tenant-id`) |

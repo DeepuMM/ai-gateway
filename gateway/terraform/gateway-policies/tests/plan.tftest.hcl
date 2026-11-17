@@ -28,7 +28,7 @@ run "deploys_shared_policy_fragments" {
   command = plan
 
   assert {
-    condition = alltrue([for id in ["agent-guardrails", "agent-pin-version", "agent-route-hosted", "project-inbound", "project-outbound", "model-api-caller", "model-api-route", "model-content-safety"] :
+    condition = alltrue([for id in ["agent-guardrails", "agent-caller", "agent-route", "agent-pin-version", "agent-route-hosted", "project-inbound", "project-outbound", "model-api-caller", "model-api-route", "model-content-safety"] :
     contains(keys(azurerm_api_management_policy_fragment.shared), id)])
     error_message = "Every fragment the policy templates include should be deployed."
   }
@@ -68,6 +68,17 @@ run "deploys_shared_policy_fragments" {
   assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "cs-violence&quot;, 4)")
     error_message = "model-content-safety should read each project's setting and default to 4."
+  }
+
+  assert {
+    condition = alltrue([for s in ["AGENT_PATH_NOT_ALLOWED", "x-ms-user-identity", "version_indicator", "agent_reference", "StartsWith(&quot;endpoint/&quot;)"] :
+    strcontains(azurerm_api_management_policy_fragment.shared["agent-route"].value, s)])
+    error_message = "agent-route should pass through only the agent's own endpoints, pin the evaluated version (body or session) and send the caller's identity."
+  }
+
+  assert {
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<validate-jwt") && strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<audience>https://ai.azure.com</audience>") && strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<set-header name=\"x-ms-user-identity\" exists-action=\"delete\" />")
+    error_message = "agent-caller should validate the caller's Foundry token and drop caller-supplied identity headers."
   }
 
   assert {

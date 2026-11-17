@@ -8,8 +8,18 @@
   <rate-limit-by-key calls="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;project-rate&quot;, 0))" renewal-period="60"
       counter-key="@((context.Subscription?.Id ?? context.Request.IpAddress) + &quot;|project&quot;)"
       remaining-calls-header-name="x-ratelimit-remaining-project" retry-after-header-name="Retry-After" />
-  <set-header name="x-correlation-id" exists-action="skip">
-    <value>@(context.RequestId.ToString())</value>
+  <!-- One correlation ID per call: the caller's x-correlation-id, else the trace ID of its W3C traceparent, else the
+       gateway's request ID. Sent to Foundry and returned to the caller (project-outbound). traceparent and tracestate
+       are passed on untouched, so the caller's trace continues through the gateway into the agent. -->
+  <set-variable name="correlation-id" value="@{
+    var caller = context.Request.Headers.GetValueOrDefault(&quot;x-correlation-id&quot;, &quot;&quot;);
+    if (!string.IsNullOrEmpty(caller)) { return caller; }
+    var parts = context.Request.Headers.GetValueOrDefault(&quot;traceparent&quot;, &quot;&quot;).Split('-');
+    if (parts.Length == 4 &amp;&amp; parts[1].Length == 32) { return parts[1]; }
+    return context.RequestId.ToString();
+  }" />
+  <set-header name="x-correlation-id" exists-action="override">
+    <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id"))</value>
   </set-header>
   <!-- Every agent operation goes to the project's Responses API. -->
   <rewrite-uri template="/openai/v1/responses" copy-unmatched-params="false" />
