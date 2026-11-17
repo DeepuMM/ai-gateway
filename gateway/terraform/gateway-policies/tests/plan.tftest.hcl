@@ -69,6 +69,11 @@ run "deploys_shared_policy_fragments" {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "cs-violence&quot;, 4)")
     error_message = "model-content-safety should read each project's setting and default to 4."
   }
+
+  assert {
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "LastOrDefault(m => (string)m[\"role\"] == \"user\")") && strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "<set-body>@((string)context.Variables[\"cs-original-body\"])</set-body>")
+    error_message = "model-content-safety should check only the latest user message and restore the full request for the model."
+  }
 }
 
 run "requires_a_content_safety_account" {

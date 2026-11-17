@@ -336,6 +336,16 @@ models:
 The settings reach every agent that uses the project's AI Gateway connection with that model. Today no project sets
 `content_safety`: both sandbox projects run on the platform defaults.
 
+### Content Safety checks the latest user message only
+
+`llm-content-safety` joins every message of a request into one text before it asks Azure AI Content Safety. Foundry
+puts a developer message ahead of every agent call ("You are an AI assistant accessed via an API...", plus the agent's
+instructions), and joined with it Content Safety rates even a severity-5 prompt as 0: until 17 Nov 2026 the gateway
+check blocked nothing on agent traffic (found in test with a copy of a real Foundry request). The fragment
+`model-content-safety` now cuts the request down to the **latest user message** for the check and gives the model the
+full request afterwards. Proved in test with Foundry's request shape: a Violence-3 prompt is blocked at a project
+threshold of 2 and answered at the default 4; a Violence-5 prompt is blocked at both; normal questions pass.
+
 ### Known issue: Content Safety outages look like content blocks
 
 **`llm-content-safety` fails closed:** when the Azure AI Content Safety service can't answer, APIM rejects the prompt
