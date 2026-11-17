@@ -5,7 +5,7 @@ Fast, low-cost general-purpose model for agents: question answering, tool callin
 | | |
 |---|---|
 | Gateway model name | `gpt-5.4-mini` |
-| Use in an agent | `platform-models/gpt-5.4-mini` |
+| Use in an agent | `<connection>/gpt-5.4-mini` (the project's own connection name) |
 | API | Chat Completions |
 | Content safety | Microsoft default guardrail on the deployment |
 
