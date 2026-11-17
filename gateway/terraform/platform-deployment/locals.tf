@@ -46,12 +46,12 @@ locals {
 
   # Developer Portal: catalog of every model on the product page (markdown).
   catalog = join("\n", concat([
-    "Models served by the AI gateway. A project reaches them through its own model API (`models/<project>`); its agents use `platform-models/<model>`.",
+    "Models served by the AI gateway. A project reaches them through its own model API (`models/<project>`); its agents use `<connection>/<model>`, where `<connection>` is the project's own connection name (`models.connection` in its `project.yaml`).",
     "",
     "**Request a model:** add it to `models.allowed` in your project's `project.yaml`, with tokens per minute and per day; the platform team approves the pull request.",
     "",
     "| Model | Status | Region | Content safety | Capacity (TPM) | Use in an agent |",
     "|---|---|---|---|---|---|",
-    ], [for n, r in local.registry : "| **${n}**: ${r.summary} | ${r.status} | ${r.region} | ${r.guardrail} | ${r.capacity_tpm} | `platform-models/${n}` |"]
+    ], [for n, r in local.registry : "| **${n}**: ${r.summary} | ${r.status} | ${r.region} | ${r.guardrail} | ${r.capacity_tpm} | `<connection>/${n}` |"]
   ))
 }
