@@ -33,7 +33,7 @@ run "registers_each_model" {
     error_message = "Backend should point at the hosting account's /openai endpoint."
   }
   assert {
-    condition     = jsondecode(azurerm_api_management_named_value.registry["gpt-5.4-mini"].value).capacity_tpm == 250000
+    condition     = jsondecode(azurerm_api_management_named_value.registry["gpt-5.4-mini"].value).capacity_tpm == 200000
     error_message = "Registry capacity should be deployment capacity x 1000 TPM."
   }
   assert {

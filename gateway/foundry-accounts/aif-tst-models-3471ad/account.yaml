@@ -1,4 +1,5 @@
-# Model-hosting Foundry account. Models in models/ are deployed here and served only through the AI gateway.
+# Model-hosting Foundry account of the test environment: models only, no agent projects (those are in
+# az-aif-tst-model-npr-01). Models in models/ are deployed here and served only through the AI gateway.
 # The folder name is the Azure resource name.
 environment: test                          # only the model stacks of this environment use this account
 subscription_id: 3471ad5a-d8a8-4a80-b30b-668798733c14
