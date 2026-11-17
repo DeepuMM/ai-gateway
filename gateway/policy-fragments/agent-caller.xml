@@ -1,0 +1,23 @@
+<fragment>
+  <!-- Shared by every agent operation, BEFORE <base />. Deployed by gateway-policy-deployment (one copy per APIM).
+       Callers present the same Entra token they would send to Foundry directly (audience https://ai.azure.com, this
+       tenant). The gateway validates it and keeps the caller's object ID in the variable caller-oid; agent-route sends
+       it to hosted agents as x-ms-user-identity, so Foundry isolates sessions and conversations per caller even though
+       it sees APIM's managed identity (project-inbound replaces the Authorization header). Callers can't set their
+       own identity or isolation key: those headers are removed here. -->
+  <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer"
+      failed-validation-error-message="A Microsoft Entra token for https://ai.azure.com from this tenant is required (Authorization: Bearer)."
+      output-token-variable-name="caller-jwt">
+    <openid-config url="https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0/.well-known/openid-configuration" />
+    <audiences>
+      <audience>https://ai.azure.com</audience>
+    </audiences>
+    <issuers>
+      <issuer>https://sts.windows.net/{{gateway-tenant-id}}/</issuer>
+      <issuer>https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0</issuer>
+    </issuers>
+  </validate-jwt>
+  <set-variable name="caller-oid" value="@(((Jwt)context.Variables[&quot;caller-jwt&quot;]).Claims.GetValueOrDefault(&quot;oid&quot;, &quot;&quot;))" />
+  <set-header name="x-ms-user-identity" exists-action="delete" />
+  <set-header name="x-ms-user-isolation-key" exists-action="delete" />
+</fragment>

@@ -1,0 +1,79 @@
+<fragment>
+  <!-- Shared by every agent operation, AFTER <base />. Deployed by gateway-policy-deployment (one copy per APIM).
+       The gateway is transparent: a caller sends exactly the request it would send to Foundry, with the gateway URL
+       {gateway}/<project path>/<agent>/ in place of the Foundry address of that agent, and gets Foundry's response back
+       unchanged (body, status, headers such as x-agent-session-id and x-request-id). Body, query string (api-version,
+       agent_session_id, ...) and headers (traceparent, tracestate, x-client-*) pass through, with three exceptions that
+       keep the gateway's guarantees: the agent comes from the path, the version is the evaluated one, and only the
+       agent's own endpoints are reachable.
+
+         kind    gateway path (after /<project path>/<agent>/)   Foundry path                         version pinned by
+         hosted  endpoint/...  (protocols/openai/responses,      /agents/<agent>/endpoint/...         the endpoint's version selector
+                 protocols/openai/conversations..., protocols/                                         (sessions: version_indicator
+                 invocations, sessions...)                                                             forced to it)
+         prompt  openai/v1/responses, openai/v1/conversations... /openai/v1/... (project)             agent_reference in the body
+
+       Reads the variables set by the project repository's templates/agent-operation-policy.xml (agent-kind,
+       agent-name, agent-version) and by agent-caller (caller-oid). -->
+  <set-variable name="agent-path" value="@{
+    var prefix = &quot;/&quot; + context.Api.Path.Trim('/') + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;) + &quot;/&quot;;
+    var path = context.Request.OriginalUrl.Path;
+    return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? path.Substring(prefix.Length).Trim('/') : &quot;&quot;;
+  }" />
+  <set-variable name="agent-query" value="@{
+    var q = context.Request.OriginalUrl.Query.Where(kv => !string.Equals(kv.Key, &quot;subscription-key&quot;, StringComparison.OrdinalIgnoreCase))
+      .SelectMany(kv => kv.Value.Select(v => Uri.EscapeDataString(kv.Key) + &quot;=&quot; + Uri.EscapeDataString(v)));
+    var s = string.Join(&quot;&amp;&quot;, q);
+    return s.Length &gt; 0 ? &quot;?&quot; + s : &quot;&quot;;
+  }" />
+  <choose>
+    <!-- hosted agent: its own endpoint surface only -->
+    <when condition="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-kind&quot;) == &quot;hosted&quot; &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;).StartsWith(&quot;endpoint/&quot;))">
+      <rewrite-uri template="@(&quot;/agents/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-query&quot;))" copy-unmatched-params="false" />
+      <!-- per-caller isolation of sessions and conversations (needs UserIdentityImpersonation for APIM's identity) -->
+      <set-header name="x-ms-user-identity" exists-action="override">
+        <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("caller-oid"))</value>
+      </set-header>
+      <choose>
+        <!-- a new session is bound to the evaluated version, whatever the caller asked for -->
+        <when condition="@(context.Request.Method == &quot;POST&quot; &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) == &quot;endpoint/sessions&quot;)">
+          <set-body>@{
+            var body = context.Request.Body?.As&lt;JObject&gt;(preserveContent: true) ?? new JObject();
+            body["version_indicator"] = new JObject(new JProperty("type", "version_ref"),
+              new JProperty("agent_version", context.Variables.GetValueOrDefault&lt;string&gt;("agent-version")));
+            return body.ToString();
+          }</set-body>
+        </when>
+      </choose>
+    </when>
+    <!-- prompt agent: the project's Responses and Conversations APIs only -->
+    <when condition="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-kind&quot;) != &quot;hosted&quot; &amp;&amp; (context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) == &quot;openai/v1/responses&quot; || context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;).StartsWith(&quot;openai/v1/conversations&quot;)))">
+      <rewrite-uri template="@(&quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-query&quot;))" copy-unmatched-params="false" />
+      <choose>
+        <when condition="@(context.Request.Method == &quot;POST&quot; &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) == &quot;openai/v1/responses&quot;)">
+          <set-body>@{
+            var body = context.Request.Body?.As&lt;JObject&gt;(preserveContent: true) ?? new JObject();
+            body.Remove("model");
+            body["agent_reference"] = new JObject(
+              new JProperty("type", "agent_reference"),
+              new JProperty("name", context.Variables.GetValueOrDefault&lt;string&gt;("agent-name")),
+              new JProperty("version", context.Variables.GetValueOrDefault&lt;string&gt;("agent-version")));
+            return body.ToString();
+          }</set-body>
+        </when>
+      </choose>
+    </when>
+    <otherwise>
+      <return-response>
+        <set-status code="404" reason="Not Found" />
+        <set-header name="Content-Type" exists-action="override">
+          <value>application/json</value>
+        </set-header>
+        <set-body>@(new JObject(new JProperty("error", new JObject(
+            new JProperty("code", "AGENT_PATH_NOT_ALLOWED"),
+            new JProperty("message", "This path is not part of the agent's endpoint. Hosted agents: endpoint/... (protocols/openai/responses, protocols/openai/conversations, protocols/invocations, sessions). Prompt agents: openai/v1/responses, openai/v1/conversations."),
+            new JProperty("correlationId", context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id", context.RequestId.ToString()))))).ToString())</set-body>
+      </return-response>
+    </otherwise>
+  </choose>
+</fragment>

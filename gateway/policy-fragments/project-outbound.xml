@@ -1,6 +1,7 @@
 <fragment>
   <!-- Shared by every project API, outbound. Deployed by gateway-policy-deployment (one copy per APIM). -->
+  <!-- The call's correlation ID (project-inbound: caller's, else its traceparent trace ID, else the request ID). -->
   <set-header name="x-correlation-id" exists-action="override">
-    <value>@(context.RequestId.ToString())</value>
+    <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id", context.RequestId.ToString()))</value>
   </set-header>
 </fragment>
