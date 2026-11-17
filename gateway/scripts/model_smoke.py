@@ -1,16 +1,13 @@
-"""Smoke tests for the model pipelines, run after terraform apply.
+"""Smoke test for model platform deployment, run after terraform apply.
 
-  model_smoke.py models  [environment]             every model in the gateway registry: deployment healthy, backend
-                                                   registered, kill switch state
-  model_smoke.py access  <project> [environment]   the project's agents can use each allowed model through the
-                                                   gateway, and nobody else can call the project's model API
+  model_smoke.py models [environment]   every model in the gateway registry: deployment healthy, backend registered,
+                                        kill switch state
 
-Everything is read from Azure (the registry from APIM named values model-meta-*), not from Git: the test proves
-what is live. `access` creates a temporary prompt agent model-project-connection-smoke-<run> in the project that uses
-"<connection>/<model>", runs the model's tests.yaml through it, and deletes it.
+Everything is read from Azure (the registry from APIM named values model-meta-*), not from Git: the test proves what
+is live. A project's access to its models is tested by the project repository's onboarding pipeline.
 
 Sign-in: Azure CLI (az login locally, azure/login in GitHub Actions). The identity needs Reader on APIM and the
-hosting accounts, and Foundry User on the project.
+hosting accounts.
 """
 import glob
 import json
@@ -23,10 +20,6 @@ from azure.identity import AzureCliCredential
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ARM = "https://management.azure.com"
-# One name per pipeline run: runs that smoke-test at the same time (e.g. gateway-policy-deployment and
-# model-project-connection after one merge) must not create and delete each other's temporary agent.
-SMOKE_AGENT = (f"model-project-connection-smoke-{os.environ['GITHUB_RUN_ID']}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
-               if os.environ.get("GITHUB_RUN_ID") else f"model-project-connection-smoke-local-{os.getpid()}")
 cred = AzureCliCredential(process_timeout=60)
 
 
@@ -100,63 +93,7 @@ def smoke_models(env):
         sys.exit(f"Smoke test failed for: {', '.join(failed)}")
 
 
-# ----------------------------------------------------------------------------- access
-def smoke_access(env, project):
-    from azure.ai.projects import AIProjectClient
-    from azure.ai.projects.models import PromptAgentDefinition
-
-    with open(os.path.join(ROOT, "projects", project, "project.yaml"), encoding="utf-8") as fh:
-        p = yaml.safe_load(fh)
-    connection = p.get("models", {}).get("connection", "platform-models")
-    allowed = [m["name"] for m in p.get("models", {}).get("allowed", [])]
-    reg = registry(env)
-    gateway_url = f"https://{env['gateway']['apim_name']}.azure-api.net/models/{project}"
-
-    # 1. Nobody but the project's identity may call the project's model API (the pipeline's own token is refused).
-    token = cred.get_token("https://cognitiveservices.azure.com/.default").token
-    r = requests.post(f"{gateway_url}/deployments/{allowed[0]}/chat/completions", params={"api-version": "2024-10-21"},
-                      headers={"Authorization": f"Bearer {token}"}, json={"messages": [{"role": "user", "content": "hi"}]},
-                      timeout=60)
-    other_refused = r.status_code == 401
-    rows = [f"| Check | Result |", "|---|---|",
-            f"| Another identity calling `{gateway_url}` | {'refused (401)' if other_refused else f'NOT refused ({r.status_code})'} |"]
-
-    # 2. An agent in the project uses each allowed model through the connection.
-    client = AIProjectClient(endpoint=p["foundry_project_endpoint"], credential=cred)
-    openai = client.get_openai_client()
-    failed = [] if other_refused else ["access control"]
-    gateway_switch = (named_values(env).get("ks-gateway-all") or "active").lower()
-    if gateway_switch != "active":
-        rows.append(f"| Agents through the gateway | skipped: global kill switch `ks-gateway-all` is '{gateway_switch}' |")
-    try:
-        for model in (allowed if gateway_switch == "active" else []):
-            if reg.get(model, {}).get("status") == "deprecated":
-                rows.append(f"| `{model}` | deprecated: still served; move to a newer model |")
-            client.agents.create_version(agent_name=SMOKE_AGENT, definition=PromptAgentDefinition(
-                model=f"{connection}/{model}", instructions="You are a smoke test. Follow the user's instruction exactly."))
-            for t in model_tests(model):
-                resp = openai.responses.create(input=t["input"],
-                                               extra_body={"agent_reference": {"name": SMOKE_AGENT, "type": "agent_reference"}})
-                ok = any(w.lower() in resp.output_text.lower() for w in t["must_contain_any"])
-                rows.append(f"| Agent with `{connection}/{model}`: \"{t['input']}\" | {'pass' if ok else 'FAIL'}: {resp.output_text[:80]!r} |")
-                if not ok:
-                    failed.append(model)
-    finally:
-        try:
-            client.agents.delete(agent_name=SMOKE_AGENT)
-        except Exception as e:  # nothing to delete when the first create failed
-            print(f"  (cleanup: {e})")
-    summary(f"**Model project connection smoke test, project {project}**\n\n" + "\n".join(rows))
-    if failed:
-        sys.exit(f"Smoke test failed: {', '.join(failed)}")
-
-
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in ("models", "access"):
-        sys.exit(__doc__)
-    if sys.argv[1] == "models":
-        smoke_models(environment(sys.argv[2] if len(sys.argv) > 2 else "test"))
-    else:
-        if len(sys.argv) < 3:
-            sys.exit("usage: model_smoke.py access <project> [environment]")
-        smoke_access(environment(sys.argv[3] if len(sys.argv) > 3 else "test"), sys.argv[2])
+    if len(sys.argv) < 2 or sys.argv[1] != "models":
+        sys.exit("usage: model_smoke.py models [environment]   (project model access: the project repository's onboarding smoke test)")
+    smoke_models(environment(sys.argv[2] if len(sys.argv) > 2 else "test"))

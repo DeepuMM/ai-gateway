@@ -68,10 +68,6 @@ resource "azurerm_api_management_policy_fragment" "shared" {
       condition     = startswith(trimspace(each.value), "<fragment>")
       error_message = "Policy fragment ${each.key}: the root element must be <fragment>."
     }
-    precondition {
-      condition     = length(setsubtract(local.referenced_fragments, keys(local.policy_fragments))) == 0
-      error_message = "A policy template includes policy fragment(s) with no file in gateway/policy-fragments/: ${join(", ", setsubtract(local.referenced_fragments, keys(local.policy_fragments)))}."
-    }
   }
 
   # Fragments reference named values ({{...}}): APIM refuses to save one whose named value doesn't exist yet.
