@@ -74,8 +74,12 @@ run "deploys_shared_policy_fragments" {
 run "requires_a_content_safety_account" {
   command = plan
 
-  variables {
-    environment = "test" # test.yaml has no gateway.content_safety
+  override_data {
+    target = data.azurerm_cognitive_account.content_safety
+    values = {
+      kind     = "AIServices" # gateway.content_safety names an account that is not Content Safety
+      endpoint = "https://other.cognitiveservices.azure.com/"
+    }
   }
 
   expect_failures = [data.azurerm_cognitive_account.content_safety]
