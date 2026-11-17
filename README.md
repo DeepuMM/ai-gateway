@@ -105,7 +105,7 @@ flowchart TB
       OPM["Operation: chat-completions<br/>POST /deployments/{model}/chat/completions"]
     end
     subgraph SHARED["Shared by every API: one set per gateway"]
-      FR["7 policy fragments<br/>agent-guardrails · agent-pin-version · project-inbound · project-outbound<br/>model-api-caller · model-api-route · model-content-safety"]
+      FR["8 policy fragments<br/>agent-guardrails · agent-pin-version · agent-route-hosted · project-inbound · project-outbound<br/>model-api-caller · model-api-route · model-content-safety"]
       NV["Named values<br/>ks-gateway-all · gateway-tenant-id<br/>per agent: ks-agent-* · agent-name-* · agent-version-*<br/>per model: ks-model-* · model-meta-* · per project+model: model-limit-*"]
       BE["Backends<br/>model-&lt;account&gt;-&lt;deployment&gt; (one per model)<br/>content-safety"]
     end
@@ -138,7 +138,7 @@ apim-sbx-bbf0o
 │   │   └── chat-completions               POST /deployments/{model}/chat/completions
 │   └── models-proj-default           /models/proj-default            model API of project proj-default
 │       └── chat-completions               POST /deployments/{model}/chat/completions
-├── Policy fragments                  agent-guardrails, agent-pin-version, project-inbound, project-outbound,
+├── Policy fragments                  agent-guardrails, agent-pin-version, agent-route-hosted, project-inbound, project-outbound,
 │                                     model-api-caller, model-api-route, model-content-safety
 ├── Named values
 │   ├── gateway:  ks-gateway-all, gateway-tenant-id
@@ -243,7 +243,8 @@ Each agent operation and project API policy only sets its own values as context 
 | Fragment | Included by | Does |
 |---|---|---|
 | `agent-guardrails` | agent operation policy, before `<base />` | global kill switch `ks-gateway-all` and agent kill switch (503), agent rate limit |
-| `agent-pin-version` | agent operation policy, after `<base />` | fixes `agent_reference` to the evaluated version |
+| `agent-pin-version` | prompt agent operation policy, after `<base />` | fixes `agent_reference` to the evaluated version |
+| `agent-route-hosted` | hosted (code) agent operation policy, after `<base />` | routes to the agent's own endpoint `/agents/<agent>/endpoint/protocols/openai/responses`; strips `model` and `agent_reference` (the version is pinned in Foundry by the endpoint's version selector) |
 | `project-inbound` | project API policy | project rate limit, correlation ID, Responses API, managed identity |
 | `project-outbound` | project API policy, project model API policy | correlation ID on the response |
 | `model-api-caller` | project model API policy (project repository's use-case onboarding) | only the project's Foundry identity (token claim `xms_mirid`; tenant from named value `gateway-tenant-id`) |
