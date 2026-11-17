@@ -38,14 +38,7 @@ def main(args):
         envs = sorted(os.path.splitext(os.path.basename(f))[0]
                       for f in glob.glob(os.path.join(ROOT, "platform", "environments", "*.yaml")))
         return [{"environment": e, "github_environment": github_env(e, "model")} for e in envs]
-    kind, projects = args[1], args[2:]
-    out = []
-    for p in projects:
-        f = os.path.join(ROOT, "projects", p, "project.yaml")
-        if os.path.exists(f):
-            e = (yaml.safe_load(open(f)) or {}).get("environment", "test")
-            out.append({"project": p, "environment": e, "github_environment": github_env(e, kind)})
-    return out
+    sys.exit(f"unknown mode {args[0]}: use accounts or environments (projects: the project repository's matrix.py)")
 
 
 def enabled(entries, kind):

@@ -4,8 +4,7 @@
 # all of them at once, with no agent redeployed and no project re-run.
 # One run per platform environment (platform/environments/<env>.yaml), in the environment's model GitHub environment
 # (test: model-test), filtered by MODEL_ENVIRONMENTS when set.
-# Pull requests: checks + plan. Main: plan, apply (approval on the environment), then smoke tests of every project
-# model API and agent on that gateway.
+# Pull requests: checks + plan. Main: plan, apply (approval on the environment), then a gateway smoke test.
 # Terraform stack: gateway/terraform/gateway-policies (state ai-gateway-policies-<env>.tfstate).
 name: gateway-policy-deployment
 
@@ -92,24 +91,19 @@ jobs:
       - name: Apply
         if: github.event_name != 'pull_request'
         run: terraform -chdir=$STACK apply -input=false tfplan
-      - name: Smoke test every project model API and agent on this gateway
-        # They all include the fragments: prove each still works through the gateway.
+      - name: Smoke test (fragments, global kill switch and model registry on this gateway)
+        # Projects live in their own repositories: each one's onboarding and agent pipelines check its model API and
+        # agents through these fragments on their next run (or run them on demand after a fragment change).
         if: github.event_name != 'pull_request'
         run: |
           pip install -q -r scripts/requirements.txt
           read SUB RG APIM < <(python3 -c "import yaml;g=yaml.safe_load(open('platform/environments/$ENVIRONMENT.yaml'))['gateway'];print(g['subscription_id'],g['resource_group'],g['apim_name'])")
-          export AZURE_SUBSCRIPTION_ID=$SUB APIM_RESOURCE_GROUP=$RG APIM_NAME=$APIM
-          projects=$(python3 -c "import glob,yaml;print(' '.join(f.split('/')[1] for f in sorted(glob.glob('projects/*/project.yaml')) if (yaml.safe_load(open(f)) or {}).get('environment','test')=='$ENVIRONMENT'))")
-          token=$(az account get-access-token --query accessToken -o tsv)
-          api_exists() { curl -sf -o /dev/null -H "Authorization: Bearer $token" \
-            "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ApiManagement/service/$APIM/apis/$1?api-version=2022-08-01"; }
-          for p in $projects; do
-            if grep -q '^models:' "projects/$p/project.yaml" && api_exists "models-$p"; then
-              python gateway/scripts/model_smoke.py access "$p" "$ENVIRONMENT"   # its agents reach each model; others get 401
-            fi
-            if api_exists "project-$p"; then
-              python scripts/agent_pipeline.py smoke "$p"
-            else
-              echo "$p: agent API not registered on $APIM yet, skipped"
-            fi
-          done
+          base="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ApiManagement/service/$APIM"
+          live=$(az rest --url "$base/policyFragments?api-version=2024-05-01" --query "value[].name" -o tsv | sort)
+          want=$(ls gateway/policy-fragments/*.xml | xargs -n1 basename | sed 's/\.xml$//' | sort)
+          missing=$(comm -13 <(echo "$live") <(echo "$want"))
+          [ -z "$missing" ] || { echo "Fragments missing on $APIM: $missing"; exit 1; }
+          ks=$(az rest --method post --url "$base/namedValues/ks-gateway-all/listValue?api-version=2024-05-01" --query value -o tsv)
+          echo "### Gateway policy smoke test ($ENVIRONMENT)" >> "$GITHUB_STEP_SUMMARY"
+          echo "fragments on $APIM: $(echo $live | tr '\n' ' '); global kill switch ks-gateway-all: $ks" | tee -a "$GITHUB_STEP_SUMMARY"
+          python gateway/scripts/model_smoke.py models $ENVIRONMENT
