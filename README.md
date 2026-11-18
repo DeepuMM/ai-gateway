@@ -12,14 +12,14 @@ The platform is released by one workflow, `release.yml`, through stages **dev �
 
 ```
 .github/workflows/
-  release.yml    trigger (PRs, merges, release tags, manual)  ─► _release.yml
-                                                                   detect what changed
-                                                                   stage dev:  _policies ─► _models
-                                                                   stage uat:  _policies ─► _models   (tags; approval)
-                                                                   stage prd:  _policies ─► _models   (tags; approval)
+  release.yml    trigger (PRs, merges, release tags, manual) ─► _release.yml:  detect ─► dev ─► uat ─► prd
+  _stage.yml     one stage: _policies ─► _models (one environment)
   ci.yml         repository checks (no Azure)
 .github/actions/setup, tf-init   shared steps (Python, Terraform, Azure sign-in, state backend)
 ```
+
+A run shows one box per stage; click a stage to see its units. uat and prd run only on release tags, after approval,
+and only when `PLATFORM_ENVIRONMENTS` lists them (otherwise their box shows as skipped).
 
 ### Triggers
 
@@ -259,7 +259,7 @@ See [Shared policy](#shared-policy-policy-fragments), [Kill switches](#kill-swit
 | `gateway/policy-fragments/<id>.xml` | the shared policy logic, one APIM policy fragment per file |
 | `gateway/terraform/gateway-policies/` | gateway policy stack: fragments, global kill switch, tenant, Content Safety backend |
 | `gateway/scripts/` | model smoke test, Developer Portal publishing |
-| `.github/workflows/` | `release.yml` (trigger), `ci.yml`, and the shared `_release`, `_policies`, `_models` |
+| `.github/workflows/` | `release.yml` (trigger), `ci.yml`, and the shared `_release`, `_stage`, `_policies`, `_models` |
 | `.github/actions/` | shared steps: `setup` (Python, Terraform, Azure sign-in), `tf-init` (state backend) |
 | `scripts/release_plan.py` | which units a release runs |
 | `scripts/set_github_environment.sh`, `gateway/scripts/platform_env.py` | setting an environment's GitHub variables; reading them |
