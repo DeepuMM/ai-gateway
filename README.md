@@ -344,13 +344,23 @@ models:
 The settings reach every agent that uses the project's AI Gateway connection with that model. Today no project sets
 `content_safety`: both sandbox projects run on the platform defaults.
 
-### Answers are checked too
+### Answer checks (opt-in, off by default)
 
-`model-content-safety` also checks the model's **answers** (`enforce-on-completions="true"`), with the same
-categories and the same per-project thresholds as prompts. A flagged answer is replaced by `403`. Foundry streams its
-model calls; a streamed answer is checked in 1,000-character windows and forwarding **stops** at the first flagged
-window (APIM returns no `403` then: the agent gets a cut-off answer). The model deployment's guardrail
-(`model.yaml` `guardrail`) still applies as well.
+`model-content-safety` can also check the model's **answers** (`enforce-on-completions`). It is **off by default**:
+a project turns it on in its `project.yaml` with `content_safety.check_answers: true`, for every model
+(`models.content_safety`) or for one (`models.allowed[].content_safety`); onboarding passes it to the gateway as
+`cs-check-answers`. Answers are then checked with the same categories and the same thresholds as the project's
+prompts. A flagged answer is replaced by `403`. Foundry streams its model calls; a streamed answer is checked in
+1,000-character windows and forwarding **stops** at the first flagged window (APIM returns no `403` then: the agent
+gets a cut-off answer, and Foundry reports "an error occurred while streaming the response").
+
+Why opt-in: each checked answer costs one Content Safety call per 1,000 characters and adds latency, and a Content
+Safety outage then cuts off legitimate answers too (it fails closed). Without it, answers are still filtered by the
+model deployment's guardrail (`model.yaml` `guardrail`).
+
+Proved in test (2026-11-18, checks on for both projects at the time): "Summarise the plot of Macbeth, including how
+each major character dies." (prompt Violence 1, answer Violence 3) was answered in `models-demo` (threshold 4) and
+stopped in `proj-default` (threshold 2); a harmless question passed in both.
 
 ### Content Safety checks the latest user message only
 
@@ -400,8 +410,8 @@ the same policies, per project and per model, and adds what the import doesn't h
 | Kill switches, registry, catalog, agent APIs | – | global/model/agent switches, `model-meta-*`, catalog page, transparent agent APIs |
 | How | portal wizard, by hand | Git and pipelines, per environment |
 
-Answers are checked too (`enforce-on-completions`, see Content safety). Not used yet, from the same APIM capability
-set: Content Safety blocklists, backend pools with a circuit breaker (one backend
+Answer checks (`enforce-on-completions`) are available per project, off by default (see Answer checks). Not used yet,
+from the same APIM capability set: Content Safety blocklists, backend pools with a circuit breaker (one backend
 per model; would also cover Content Safety outages), prompt/completion logging to Azure Monitor, semantic caching
 (needs Redis and an embeddings model).
 
