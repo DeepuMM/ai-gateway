@@ -642,19 +642,31 @@ repositories.
 | Model-hosting Foundry account (models only) | `aif-tst-models-3471ad` | | `aif-sbx-models-bbf0o` |
 | Agent Foundry account (projects only) | `az-aif-tst-model-npr-01` | | `aif-sbx-agents-bbf0o` |
 | Content Safety | `cs-tst-3471ad` | | `cs-sbx-bbf0o` |
+| Container registry (hosted agents' images) | `acrscbx3471ad` (Basic, admin off, classic permissions) | | — |
 | Pipeline identity | `id-promptops-pipeline` | | `id-sbx-pipeline` |
-| GitHub environment | `model-dev` | `model-uat`, `model-prd` (required reviewers) | `sandbox` (not a stage) |
+| GitHub environment | `model-dev` | `model-uat`, `model-prd` (required reviewers) | — (not a stage) |
 | In `PLATFORM_ENVIRONMENTS` | yes | not yet | no |
 | Projects | `models-demo`, `proj-default` | none yet | none (gateway only) |
 
 The sandbox is a disposable copy of the platform for trying platform changes by hand (`gateway/sandbox`); the stages
 don't deploy to it.
 
-**Give uat or prd their own resources:** create them with the platform stack; create the environment's pipeline
-identity with a federated credential for `model-<env>` (and the project repository's `model-<env>`, `agent-<env>`);
-`scripts/set_github_environment.sh <env> KEY=VALUE ...` here and in the project repository; add the environment to
-`PLATFORM_ENVIRONMENTS`; add hosting accounts with `environment: <env>` and their models. The next release tag
-deploys it after approval.
+**Container registry for hosted agents.** Each environment has one Azure Container Registry for the hosted (container)
+agents of every project (dev: `acrscbx3471ad`). The project repository's agent-deploy builds each agent's image there
+with ACR's cloud build and creates the agent version from it; the project repository finds the registry through the
+GitHub variable `ACR_NAME` on its `agent-<env>` environments. Access:
+
+| Identity | Role on the registry | Why |
+|---|---|---|
+| Pipeline identity | covered by Contributor on the resource group (classic permission mode; an ABAC-mode registry needs Container Registry Repository Writer) | build and push images |
+| Each Foundry project's managed identity that runs hosted agents | **AcrPull** (granted by the platform team, per project) | Foundry pulls the image as the project |
+
+**Give uat or prd their own resources:** create them with the platform stack, including the environment's container
+registry (Basic or Standard, admin user off); create the environment's pipeline identity with a federated credential
+for `model-<env>` (and the project repository's `model-<env>`, `agent-<env>`); `scripts/set_github_environment.sh
+<env> KEY=VALUE ...` here and in the project repository (there with `ACR_NAME`); grant AcrPull on the registry to the
+projects that run hosted agents; add the environment to `PLATFORM_ENVIRONMENTS`; add hosting accounts with
+`environment: <env>` and their models. The next release tag deploys it after approval.
 
 Models and agents are in separate Foundry accounts, so the only way an agent reaches a model is the gateway. In dev
 the agent account still holds deployments made before the platform (`gpt-5.4-mini`, `gpt-6.1-sol`,
