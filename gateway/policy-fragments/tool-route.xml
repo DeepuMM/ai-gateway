@@ -26,9 +26,10 @@
       remaining-calls-header-name="x-ratelimit-remaining-tool" retry-after-header-name="Retry-After" />
 
   <!-- Exposed tools only. MCP calls a tool with the JSON-RPC method tools/call and the tool's name in params.name.
-       A call to any tool the owning team didn't list in tool.yaml is answered by the gateway with a JSON-RPC error
-       and never reaches the server, whatever the agent definition or the model asks for. Only the request is read;
-       responses stream through unbuffered. -->
+       A call to any tool the owning team didn't list in tool.yaml is answered by the gateway and never reaches the
+       server, whatever the agent definition or the model asks for. The answer is an MCP tool result with isError true
+       (how MCP reports a failed tool call), so the model sees TOOL_NOT_ALLOWED and the agent run carries on. Only the
+       request is read; responses stream through unbuffered. -->
   <set-variable name="tool-refused" value="@{
     if (context.Request.Method != &quot;POST&quot;) { return &quot;&quot;; }
     var body = context.Request.Body?.As&lt;string&gt;(true) ?? &quot;&quot;;
@@ -56,9 +57,11 @@
           return new JObject(
             new JProperty(&quot;jsonrpc&quot;, &quot;2.0&quot;),
             new JProperty(&quot;id&quot;, id),
-            new JProperty(&quot;error&quot;, new JObject(
-              new JProperty(&quot;code&quot;, -32602),
-              new JProperty(&quot;message&quot;, &quot;TOOL_NOT_ALLOWED: tool &quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool-refused&quot;) + &quot; is not exposed by &quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool&quot;, &quot;&quot;) + &quot; on this gateway.&quot;)))).ToString();
+            new JProperty(&quot;result&quot;, new JObject(
+              new JProperty(&quot;isError&quot;, true),
+              new JProperty(&quot;content&quot;, new JArray(new JObject(
+                new JProperty(&quot;type&quot;, &quot;text&quot;),
+                new JProperty(&quot;text&quot;, &quot;TOOL_NOT_ALLOWED: tool &quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool-refused&quot;) + &quot; is not exposed by &quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool&quot;, &quot;&quot;) + &quot; on this gateway.&quot;))))))).ToString();
         }</set-body>
       </return-response>
     </when>
