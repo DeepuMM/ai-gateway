@@ -66,6 +66,10 @@ run "deploys_shared_policy_fragments" {
     error_message = "model-content-safety should use the content-safety backend."
   }
   assert {
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "enforce-on-completions=\"true\"")
+    error_message = "model-content-safety should check the model's answers too, not only prompts."
+  }
+  assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "cs-violence&quot;, 4)")
     error_message = "model-content-safety should read each project's setting and default to 4."
   }
