@@ -9,11 +9,12 @@
        model's models.allowed[].content_safety, else the project's models.content_safety. A setting neither passes
        uses the platform default here: severity 4 for each category, Prompt Shields on. Settings can only be stricter
        (validated by agent-ci and the model-project-connection plan).
-       Only the LATEST USER MESSAGE is checked: llm-content-safety joins all messages into one text, and Foundry puts a
-       developer message ahead of every agent call ("You are an AI assistant accessed via an API..."); joined with it,
-       Content Safety rates even a severity-5 prompt 0, so nothing was ever blocked. The fragment therefore saves the
-       request, cuts the body down to the last user message for the check, and restores the full request afterwards.
-       Earlier turns were checked when they were sent.
+       The check scores what the USER sent: the latest user message. The rest of the request (Foundry's developer
+       message "You are an AI assistant accessed via an API...", the agent's instructions, history, tool results) is
+       written by the platform and the agent; llm-content-safety scores all text it gets as one, and with that framing
+       a harmful message would score far lower than on its own. So the fragment saves the request, gives the policy a
+       copy with only the last user message, and restores the full request for the model. Earlier user messages were
+       checked when they were sent.
        ANSWERS are checked too only when the project opts in (cs-check-answers true, from project.yaml
        content_safety.check_answers; platform default OFF), with the same categories and thresholds: a flagged answer
        is replaced by 403; a streamed answer (Foundry streams its model calls) is checked in 1,000-character windows

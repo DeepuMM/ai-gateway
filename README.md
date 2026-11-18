@@ -45,7 +45,7 @@ Set per GitHub environment (`sandbox`; test: `model-test`), as **variables**, no
 | `AZURE_TENANT_ID` | both pipelines | the platform tenant |
 | `AZURE_SUBSCRIPTION_ID` | both pipelines | the subscription of APIM and the Foundry accounts |
 
-Repository variable: `MODEL_ENVIRONMENTS`, the environments the pipelines may run in (`sandbox,test`).
+Repository variable: `MODEL_ENVIRONMENTS`, the environments the pipelines may run in (`test`; the sandbox is added only while it is used).
 
 Everything else comes from `platform/environments/<env>.yaml`: the APIM name and resource group (gateway URL
 `https://<apim_name>.azure-api.net`), the agent Foundry account, the Content Safety account, the tenant, the Terraform
@@ -341,8 +341,9 @@ models:
 | `gpt-5.4-mini` | 4 (platform) | 4 (platform) | **3** (project) | 4 (platform) | on (platform) |
 | `other-model` | 4 (platform) | 4 (platform) | **3** (project) | **2** (model) | on (platform) |
 
-The settings reach every agent that uses the project's AI Gateway connection with that model. Today no project sets
-`content_safety`: both sandbox projects run on the platform defaults.
+The settings reach every agent that uses the project's AI Gateway connection with that model. In the reference
+projects, `proj-default` sets `violence: 2` and `models-demo` runs on the platform defaults; the project repository's
+onboarding smoke test proves the difference on every run.
 
 ### Answer checks (opt-in, off by default)
 
@@ -354,23 +355,24 @@ prompts. A flagged answer is replaced by `403`. Foundry streams its model calls;
 1,000-character windows and forwarding **stops** at the first flagged window (APIM returns no `403` then: the agent
 gets a cut-off answer, and Foundry reports "an error occurred while streaming the response").
 
-Why opt-in: each checked answer costs one Content Safety call per 1,000 characters and adds latency, and a Content
-Safety outage then cuts off legitimate answers too (it fails closed). Without it, answers are still filtered by the
-model deployment's guardrail (`model.yaml` `guardrail`).
+Why opt-in: each checked answer costs one Content Safety call per 1,000 characters and adds latency, and when Content
+Safety is unavailable the answer is stopped too (see [Availability](#availability-content-safety-fails-closed)).
+Without it, answers are still filtered by the model deployment's guardrail (`model.yaml` `guardrail`). Turn it on
+for use cases whose answers need the same thresholds as their prompts (for example customer-facing content).
 
-Proved in test (2026-11-18, checks on for both projects at the time): "Summarise the plot of Macbeth, including how
-each major character dies." (prompt Violence 1, answer Violence 3) was answered in `models-demo` (threshold 4) and
-stopped in `proj-default` (threshold 2); a harmless question passed in both.
+Example: "Summarise the plot of Macbeth, including how each major character dies." has a prompt at Violence 1 and an
+answer at Violence 3. With answer checks on, it is answered at the default threshold 4 and stopped at `violence: 2`;
+a question with a harmless answer passes at both.
 
-### Content Safety checks the latest user message only
+### Which text is checked: the latest user message
 
-`llm-content-safety` joins every message of a request into one text before it asks Azure AI Content Safety. Foundry
-puts a developer message ahead of every agent call ("You are an AI assistant accessed via an API...", plus the agent's
-instructions), and joined with it Content Safety rates even a severity-5 prompt as 0: until 17 Nov 2026 the gateway
-check blocked nothing on agent traffic (found in test with a copy of a real Foundry request). The fragment
-`model-content-safety` now cuts the request down to the **latest user message** for the check and gives the model the
-full request afterwards. Proved in test with Foundry's request shape: a Violence-3 prompt is blocked at a project
-threshold of 2 and answered at the default 4; a Violence-5 prompt is blocked at both; normal questions pass.
+The prompt check scores **what the user sent**: the latest `user` message of the request. The rest of a request to
+the model is written by the platform and the agent, not by the user: Foundry starts every agent call with a
+developer message ("You are an AI assistant accessed via an API...", plus the agent's instructions), followed by the
+conversation history and tool results. `llm-content-safety` scores all the text it is given as one; scored together
+with that framing, a harmful user message would be rated much lower than on its own (a Violence-5 prompt scores 0).
+So `model-content-safety` gives the policy a copy of the request that holds only the latest user message, and
+restores the full request before it goes to the model. Earlier user messages were checked when they were sent.
 
 ### Token metrics
 
@@ -383,8 +385,9 @@ W3C correlation, and logs no headers or bodies):
 | model call | `model-api-route` | `Project`, `Model`, `Hop`=`model` |
 | agent call (Responses) | `agent-route` | `Project`, `Agent`, `Subscription ID` (consumer), `Hop`=`agent` |
 
-Metric names: `Prompt Tokens`, `Completion Tokens`, `Total Tokens`, plus Foundry's cached, reasoning and audio
-token counts. Verified in test on 2026-11-18 for both agent kinds (prompt and hosted).
+Metric names: `Prompt Tokens`, `Completion Tokens`, `Total Tokens`, plus the cached, reasoning and audio token
+counts the model reports. They are emitted for both agent kinds (prompt and hosted). Use them for showback per
+project and consumer, capacity planning against each model's TPM, and alerts on unusual consumption.
 
 ```kusto
 customMetrics
@@ -410,30 +413,31 @@ the same policies, per project and per model, and adds what the import doesn't h
 | Kill switches, registry, catalog, agent APIs | – | global/model/agent switches, `model-meta-*`, catalog page, transparent agent APIs |
 | How | portal wizard, by hand | Git and pipelines, per environment |
 
-Answer checks (`enforce-on-completions`) are available per project, off by default (see Answer checks). Not used yet,
-from the same APIM capability set: Content Safety blocklists, backend pools with a circuit breaker (one backend
-per model; would also cover Content Safety outages), prompt/completion logging to Azure Monitor, semantic caching
-(needs Redis and an embeddings model).
+Answer checks (`enforce-on-completions`) are available per project, off by default (see Answer checks).
 
-### Known issue: Content Safety outages look like content blocks
+Further APIM capabilities this reference leaves out, to add where an environment needs them:
 
-**`llm-content-safety` fails closed:** when the Azure AI Content Safety service can't answer, APIM rejects the prompt
-with the same `403 "Request failed content safety check"` as a real block. In the sandbox (17 Nov 2026) the account
-`cs-sbx-bbf0o` (East US 2) answered `InternalError: no healthy upstream` to **7 of 28** checks in one test, so 7
-legitimate questions got a `403`. The blocked and the allowed requests were byte-for-byte identical (agent
-instructions as a `developer` message plus the user's question, one model call per answer); every one of the 7 blocks
-was this service error, none was flagged content. Smoke tests through the gateway can therefore fail at random.
+| Capability | When to add it |
+|---|---|
+| Content Safety blocklists (`<blocklists>`) | organisation-specific terms to block on top of the harm categories |
+| Backend pools with a circuit breaker | more than one deployment or region per model, or two Content Safety accounts (see Availability) |
+| Prompt and completion logging to Azure Monitor | audit trails that need the text of prompts and answers (mind data protection and retention) |
+| Semantic caching (`llm-semantic-cache-*`) | repeated questions at volume; needs Azure Managed Redis and an embeddings model |
 
-Not fixed yet. Options: a Content Safety account in another region, or two accounts behind an APIM backend pool with
-a circuit breaker (to be checked: whether `llm-content-safety` accepts a pool), or removing the
-`model-content-safety` include until then.
+### Availability: Content Safety fails closed
 
-How to tell an outage from a real block: in the APIM gateway logs (`ApiManagementGatewayLogs`), both have
-`LastErrorReason = ContentSafetyPolicyViolated`; an outage has `InternalError` in `LastErrorMessage`.
+When Azure AI Content Safety can't be reached or returns an error, `llm-content-safety` rejects the request with the
+same `403 "Request failed content safety check"` as a real block. This is deliberate: no prompt reaches a model
+unchecked. It also means a Content Safety service problem shows up as blocked requests.
 
-An earlier test with `violence: 2` seemed to block 3 legitimate questions; that was before this was found and was most
-likely the same outages, so it says nothing about the threshold. Before tightening a project, run its smoke tests and
-evaluation datasets through the gateway and check the gateway logs for the cause of each `403`.
+Operating it:
+
+- **Tell the two apart** in the gateway logs (`ApiManagementGatewayLogs`): both have
+  `LastErrorReason = ContentSafetyPolicyViolated`; a service problem has `InternalError` in `LastErrorMessage`.
+- **Before tightening a project's thresholds**, run its smoke tests and evaluation datasets through the gateway and
+  check the cause of every `403` in the logs.
+- **For higher availability**, put a second Content Safety account (another region) behind an APIM backend pool with
+  a circuit breaker and point the `content-safety` backend at the pool.
 
 ### How it is built
 
@@ -524,15 +528,15 @@ Foundry as a failed agent response.
 ### Stop and resume
 
 In the Azure portal: **API Management → Named values → `<switch>` → Edit → value `suspended` → Save**. Set it back
-to `active` to resume. With the Azure CLI (sandbox names shown):
+to `active` to resume. With the Azure CLI (test names shown):
 
 ```bash
 # stop
-az apim nv update -g rg-ai-gateway-sandbox -n apim-sbx-bbf0o --named-value-id ks-agent-expense-policy-agent --value suspended
+az apim nv update -g az-rg-tst-model-npr-01 -n apim-agents-3471ad --named-value-id ks-agent-expense-policy-agent --value suspended
 # check
-az apim nv show   -g rg-ai-gateway-sandbox -n apim-sbx-bbf0o --named-value-id ks-agent-expense-policy-agent --query value
+az apim nv show   -g az-rg-tst-model-npr-01 -n apim-agents-3471ad --named-value-id ks-agent-expense-policy-agent --query value
 # resume
-az apim nv update -g rg-ai-gateway-sandbox -n apim-sbx-bbf0o --named-value-id ks-agent-expense-policy-agent --value active
+az apim nv update -g az-rg-tst-model-npr-01 -n apim-agents-3471ad --named-value-id ks-agent-expense-policy-agent --value active
 ```
 
 The change reaches the gateway within seconds. Anyone who can edit the APIM instance's named values (Owner, Contributor or
@@ -571,7 +575,7 @@ The change reaches the gateway within seconds. Anyone who can edit the APIM inst
 Each run targets one platform environment through the GitHub environment of the same name (`sandbox`; test:
 `model-test`), whose variables hold the pipeline identity (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
 `AZURE_SUBSCRIPTION_ID`, GitHub OIDC, no secrets). The repository variable `MODEL_ENVIRONMENTS` lists the environments
-the pipelines may run in (`sandbox,test`). In each environment one pipeline identity trusts both repositories.
+the pipelines may run in (`test`). In each environment one pipeline identity trusts both repositories.
 
 | | sandbox | test |
 |---|---|---|
@@ -593,10 +597,10 @@ the agent account still holds deployments made before the platform (`gpt-5.4-min
 ```bash
 az login
 cd gateway/terraform/gateway-policies     # or platform-deployment
-terraform init -backend-config="resource_group_name=rg-ai-gateway-sandbox" -backend-config="storage_account_name=sttfsbxbbf0o" \
-  -backend-config="container_name=tfstate" -backend-config="key=ai-gateway-policies-sandbox.tfstate" -backend-config="use_azuread_auth=true"
+terraform init -backend-config="resource_group_name=rg-scbx-terraform-state" -backend-config="storage_account_name=stscbxtf3471ad5a" \
+  -backend-config="container_name=tfstate" -backend-config="key=ai-gateway-policies-test.tfstate" -backend-config="use_azuread_auth=true"
 terraform test
-terraform plan -var environment=sandbox
+terraform plan -var environment=test
 cd ../../..
-python gateway/scripts/model_smoke.py models sandbox
+python gateway/scripts/model_smoke.py models test
 ```
