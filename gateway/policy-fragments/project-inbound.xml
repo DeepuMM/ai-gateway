@@ -21,8 +21,7 @@
   <set-header name="x-correlation-id" exists-action="override">
     <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id"))</value>
   </set-header>
-  <!-- Every agent operation goes to the project's Responses API. -->
-  <rewrite-uri template="/openai/v1/responses" copy-unmatched-params="false" />
+  <!-- The Foundry path is set per call by agent-route (the caller's own Foundry path; transparent gateway). -->
   <!-- APIM, not the caller, authenticates to Foundry; the caller's key is not passed on. -->
   <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
   <authentication-managed-identity resource="https://ai.azure.com" />

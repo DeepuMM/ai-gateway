@@ -99,13 +99,13 @@ flowchart TB
       PM["platform-models<br/>model catalog in the Developer Portal"]
     end
     subgraph AGENTAPI["Agent API: one per project<br/>project-&lt;project&gt; · path /ai/&lt;project&gt;<br/>API policy: project quota + fragments project-inbound / project-outbound"]
-      OPA["Operation: one per agent<br/>invoke-&lt;agent&gt; · POST /&lt;agent&gt;/responses<br/>operation policy: agent values + fragments agent-guardrails / agent-pin-version"]
+      OPA["Operations: three per agent<br/>GET · POST · DELETE /&lt;agent&gt;/* (the agent's Foundry path follows)<br/>operation policy: agent values + fragments agent-caller / agent-guardrails / agent-route"]
     end
     subgraph MODELAPI["Model API: one per project with models:<br/>models-&lt;project&gt; · path /models/&lt;project&gt;<br/>API policy: identity, routing table (per model: limits, backend, content safety settings) + fragments model-api-caller / model-api-route / model-content-safety / project-outbound"]
       OPM["Operation: chat-completions<br/>POST /deployments/{model}/chat/completions"]
     end
     subgraph SHARED["Shared by every API: one set per gateway"]
-      FR["8 policy fragments<br/>agent-guardrails · agent-pin-version · agent-route-hosted · project-inbound · project-outbound<br/>model-api-caller · model-api-route · model-content-safety"]
+      FR["8 policy fragments<br/>agent-caller · agent-guardrails · agent-route · project-inbound · project-outbound<br/>model-api-caller · model-api-route · model-content-safety"]
       NV["Named values<br/>ks-gateway-all · gateway-tenant-id<br/>per agent: ks-agent-* · agent-name-* · agent-version-*<br/>per model: ks-model-* · model-meta-* · per project+model: model-limit-*"]
       BE["Backends<br/>model-&lt;account&gt;-&lt;deployment&gt; (one per model)<br/>content-safety"]
     end
@@ -121,31 +121,32 @@ flowchart TB
   MODELAPI -.->|includes| FR
 ```
 
-### What is in the sandbox gateway today
+### What is in the test gateway today
 
 ```text
-apim-sbx-bbf0o
+apim-agents-3471ad
 ├── Products
-│   ├── agents-sandbox ─────────────── APIs: project-models-demo, project-proj-default   (subscription key)
-│   └── platform-models ────────────── API:  models-models-demo                          (catalog; called with Entra token)
+│   ├── agents-test ────────────────── APIs: project-models-demo, project-proj-default   (subscription key + Entra token)
+│   └── platform-models ────────────── APIs: models-models-demo, models-proj-default     (catalog; project identities only)
 ├── APIs
 │   ├── project-models-demo           /ai/models-demo                 agent API of project models-demo
-│   │   └── invoke-demo-assistant          POST /demo-assistant/responses
+│   │   ├── basic-code-agent-{get,post,delete}   /basic-code-agent/*    hosted (code) agent
+│   │   └── demo-assistant-{get,post,delete}     /demo-assistant/*      prompt agent
 │   ├── project-proj-default          /ai/proj-default                agent API of project proj-default
-│   │   ├── invoke-expense-policy-agent    POST /expense-policy-agent/responses
-│   │   └── invoke-leave-policy-agent      POST /leave-policy-agent/responses
+│   │   ├── expense-policy-agent-{get,post,delete}
+│   │   └── leave-policy-agent-{get,post,delete}
 │   ├── models-models-demo            /models/models-demo             model API of project models-demo
 │   │   └── chat-completions               POST /deployments/{model}/chat/completions
 │   └── models-proj-default           /models/proj-default            model API of project proj-default
 │       └── chat-completions               POST /deployments/{model}/chat/completions
-├── Policy fragments                  agent-guardrails, agent-pin-version, agent-route-hosted, project-inbound, project-outbound,
+├── Policy fragments                  agent-caller, agent-guardrails, agent-route, project-inbound, project-outbound,
 │                                     model-api-caller, model-api-route, model-content-safety
 ├── Named values
 │   ├── gateway:  ks-gateway-all, gateway-tenant-id
-│   ├── agents:   ks-agent-<agent>, agent-name-<agent>, agent-version-<agent>   (× 3 agents)
-│   └── models:   ks-model-gpt-5-4-mini, model-meta-gpt-5-4-mini, model-limit-models-demo-gpt-5-4-mini
-└── Backends                          model-aif-sbx-models-bbf0o-gpt-5-4-mini  →  aif-sbx-models-bbf0o/openai
-                                      content-safety                           →  cs-sbx-bbf0o
+│   ├── agents:   ks-agent-<agent>, agent-name-<agent>, agent-version-<agent>   (× 4 agents)
+│   └── models:   ks-model-gpt-5-4-mini, model-meta-gpt-5-4-mini, model-limit-<project>-gpt-5-4-mini
+└── Backends                          model-aif-tst-models-3471ad-gpt-5-4-mini  →  aif-tst-models-3471ad/openai
+                                      content-safety                            →  cs-tst-3471ad
 ```
 
 ### One per what, created by whom
@@ -153,7 +154,7 @@ apim-sbx-bbf0o
 | APIM object | One per | Name | Created by |
 |---|---|---|---|
 | Agent API | project | `project-<project>`, path `ai/<project>` | `agent-deploy` (`register`) |
-| Agent operation | agent | `invoke-<agent>`, `POST /<agent>/responses` | `agent-deploy` (`register`) |
+| Agent operations | agent | `<agent>-get`, `<agent>-post`, `<agent>-delete` on `/<agent>/*` | `agent-deploy` (`register`) |
 | Agent API policy / operation policy | project / agent | from the project repository's `templates/` | `agent-deploy` (`register`), project repository |
 | `ks-agent-*`, `agent-name-*`, `agent-version-*` | agent | | `agent-deploy` (`register`) |
 | Product `agents-<env>` | as set in `project.yaml` `gateway.product` | e.g. `agents-sandbox` | `agent-deploy` (`register`) |
@@ -175,17 +176,21 @@ APIM runs the operation policy, which calls the API policy at `<base />`. Thin p
 hold only their own values and include the shared fragments.
 
 ```text
-Agent call   POST /ai/<project>/<agent>/responses   (caller's subscription key)
-└─ operation policy  invoke-<agent>                         project repository: templates/agent-operation-policy.xml
-   ├─ set variables: agent, ks-agent-<agent>, agent-name, agent-version, rate limit
+Agent call   <method> /ai/<project>/<agent>/<the agent's Foundry path>   (subscription key + caller's Entra token)
+             e.g. POST .../basic-code-agent/endpoint/protocols/openai/responses?api-version=v1   (hosted)
+                  POST .../demo-assistant/openai/v1/responses                                 (prompt)
+└─ operation policy  <agent>-<method>                       project repository: templates/agent-operation-policy.xml
+   ├─ set variables: agent, kind, ks-agent-<agent>, agent-name, agent-version, rate limit
+   ├─ fragment agent-caller         caller's Entra token (aud https://ai.azure.com) validated, object ID kept
    ├─ fragment agent-guardrails     global kill switch → agent kill switch → agent rate limit
    ├─ quota-by-key                  agent daily quota
    ├─ <base /> ─► API policy  project-<project>             project repository: templates/project-policy.xml
    │              ├─ set variable: project rate limit
    │              ├─ quota-by-key   project daily quota
-   │              └─ fragment project-inbound   project rate limit, correlation ID,
-   │                                            rewrite to /openai/v1/responses, APIM managed identity
-   ├─ fragment agent-pin-version    agent_reference = agent name + evaluated version
+   │              └─ fragment project-inbound   project rate limit, correlation ID, APIM managed identity
+   ├─ fragment agent-route          the agent's own Foundry endpoints only (else 404), body/query/headers unchanged;
+   │                                prompt: agent_reference = evaluated version; hosted: x-ms-user-identity = caller,
+   │                                new sessions bound to the evaluated version (endpoint pinned in Foundry)
    └─ outbound: <base /> ─► fragment project-outbound (correlation ID)
    ──► Foundry project runs the agent ──► the agent calls its model:
 
@@ -221,17 +226,19 @@ See [Shared policy](#shared-policy-policy-fragments), [Kill switches](#kill-swit
 ## Shared policy (policy fragments)
 
 The gateway logic every agent shares (kill switch check, rate limit, forwarding to Foundry with managed identity,
-pinning the evaluated version) is in APIM **policy fragments**, one per file in `gateway/policy-fragments/`.
+routing to the agent's Foundry endpoint at its evaluated version) is in APIM **policy fragments**, one per file in `gateway/policy-fragments/`.
 Each agent operation and project API policy only sets its own values as context variables and includes the fragments:
 
 ```xml
 <set-variable name="agent" value="expense-policy-agent" />
+<set-variable name="agent-kind" value="prompt" />
 <set-variable name="agent-status" value="{{ks-agent-expense-policy-agent}}" />
 <set-variable name="agent-rate" value="@(30)" />  ...
+<include-fragment fragment-id="agent-caller" />
 <include-fragment fragment-id="agent-guardrails" />
 <quota-by-key calls="2000" renewal-period="86400" counter-key="..." />
 <base />
-<include-fragment fragment-id="agent-pin-version" />
+<include-fragment fragment-id="agent-route" />
 ```
 
 | Change | Pipeline | Agents redeployed |
@@ -245,9 +252,7 @@ Each agent operation and project API policy only sets its own values as context 
 | `agent-guardrails` | agent operation policy, before `<base />` | global kill switch `ks-gateway-all` and agent kill switch (503), agent rate limit |
 | `agent-caller` | agent operation policy, before `<base />` | validates the caller's Entra token (the one it would send to Foundry: audience `https://ai.azure.com`, this tenant); keeps its object ID; removes caller-sent `x-ms-user-identity` / `x-ms-user-isolation-key` |
 | `agent-route` | agent operation policy, after `<base />` | **transparent route**: the caller's Foundry path after `/<project path>/<agent>/` goes to the agent's Foundry endpoint with body, query string and headers unchanged. Hosted: `endpoint/...` only, `x-ms-user-identity` = caller (per-caller sessions), new sessions bound to the evaluated version. Prompt: `openai/v1/responses` and `openai/v1/conversations` only, `agent_reference` = evaluated version. Anything else: `404 AGENT_PATH_NOT_ALLOWED` |
-| `agent-pin-version` | (being retired) old prompt agent route `POST /<agent>/responses` | fixes `agent_reference` to the evaluated version |
-| `agent-route-hosted` | (being retired) old hosted route | routes to the agent's own endpoint `/agents/<agent>/endpoint/protocols/openai/responses`; strips `model` and `agent_reference` (the version is pinned in Foundry by the endpoint's version selector) |
-| `project-inbound` | project API policy | project rate limit, correlation ID, Responses API, managed identity |
+| `project-inbound` | project API policy | project rate limit, correlation ID (caller's `x-correlation-id`, else its `traceparent` trace ID, else the request ID), managed identity |
 | `project-outbound` | project API policy, project model API policy | correlation ID on the response |
 | `model-api-caller` | project model API policy (project repository's use-case onboarding) | only the project's Foundry identity (token claim `xms_mirid`; tenant from named value `gateway-tenant-id`) |
 | `model-api-route` | project model API policy, after its routing table | global kill switch `ks-gateway-all` (503), 404 `MODEL_NOT_ALLOWED`, model kill switch, token limit, backend, managed identity |
@@ -410,7 +415,7 @@ model (the project's model API, through the AI Gateway connection). The switches
 
 ```mermaid
 flowchart LR
-  C([Caller]) -->|"POST /ai/&lt;project&gt;/&lt;agent&gt;/responses"| A
+  C([Caller]) -->|"/ai/&lt;project&gt;/&lt;agent&gt;/&lt;Foundry path&gt;"| A
   subgraph GW1["Gateway: agent API (agent-guardrails fragment)"]
     A{"ks-gateway-all<br/>active?"} -->|yes| B{"ks-agent-&lt;agent&gt;<br/>active?"}
   end
