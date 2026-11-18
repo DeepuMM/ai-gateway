@@ -1,9 +1,12 @@
-# Releases the AI platform through _release.yml (stages dev → uat → prd):
-#   pull request changing the platform     plans (nothing changes)
-#   merge to main changing the platform    stage dev: the gateway policy and/or the models, whichever changed
-#   release tag v*                         everything: dev, then uat and prd (each after approval) when
-#                                          PLATFORM_ENVIRONMENTS lists them
-#   manual run                             everything, stage dev
+# Releases the AI platform, one stage per environment (_stage.yml: plan ─► policies ─► models):
+#
+#   dev ─► uat ─► prd
+#
+#   pull request changing the platform     dev: plans (nothing changes)
+#   merge to main changing the platform    dev: the gateway policy and/or the models, whichever changed
+#   release tag v*                         dev, then uat, then prd: each after the previous stage succeeded, with
+#                                          approval (model-uat, model-prd), when PLATFORM_ENVIRONMENTS lists it
+#   manual run                             dev, everything
 name: release
 
 on:
@@ -26,7 +29,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    uses: ./.github/workflows/_release.yml
+  dev:
+    uses: ./.github/workflows/_stage.yml
     with:
+      environment: dev
       plan_only: ${{ github.event_name == 'pull_request' }}
+
+  uat:
+    needs: dev
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    uses: ./.github/workflows/_stage.yml
+    with:
+      environment: uat
+
+  prd:
+    needs: uat
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    uses: ./.github/workflows/_stage.yml
+    with:
+      environment: prd
