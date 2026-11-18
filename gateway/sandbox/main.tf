@@ -1,5 +1,5 @@
 # gateway/sandbox — DISPOSABLE test environment for the model pipelines, in one resource group.
-# Creates what platform/environments/sandbox.yaml points at: a model-hosting Foundry account (no agents), an
+# Creates a disposable copy of the platform: a model-hosting Foundry account (no agents), an
 # agent Foundry account + project (no model deployments), an APIM (Basic v2), and storage for Terraform state.
 # The gpt-5.4-mini deployment is NOT created here: the model platform deployment pipeline creates it. Local state;
 # `terraform destroy` (or deleting the resource group) removes everything.
@@ -169,7 +169,7 @@ resource "azurerm_role_assignment" "apim_content_safety" {
 }
 
 output "environment_file" {
-  description = "Paste into platform/environments/sandbox.yaml"
+  description = "The sandbox's coordinates: values for scripts/set_github_environment.sh sandbox (both repositories)"
   value = yamlencode({
     environment = "sandbox"
     tenant_id   = data.azurerm_client_config.me.tenant_id

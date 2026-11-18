@@ -3,7 +3,7 @@
 What the pipelines need in an environment but can't create themselves (the pipeline identity can't assign roles).
 A subscription Owner runs them once per environment, in this order, before the first pipeline run. They only add
 resources and role assignments, and are safe to re-run (existing resources are skipped; an existing role assignment
-is reported by `az`). These are the test environment's (`platform/environments/test.yaml`); copy and adjust the names
+is reported by `az`). These are the dev environment's (formerly `test`; its coordinates are the GitHub variables of `model-dev`); copy and adjust the names
 for another environment.
 
 | Script | Adds |

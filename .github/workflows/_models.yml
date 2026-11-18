@@ -1,0 +1,70 @@
+# Unit: the model platform of ONE environment (called by _release.yml). Terraform gateway/terraform/platform-deployment,
+# state ai-gateway-models-<env>.tfstate: the models of the hosting accounts whose account.yaml has environment: <env>
+# (gateway/foundry-accounts/<account>/models/<model>/): deployment, backend, kill switch ks-model-<model>, registry
+# entry model-meta-<model>, the model catalog product. Then the smoke test and the Developer Portal.
+# plan_only: plan, nothing changes.
+name: _models
+
+on:
+  workflow_call:
+    inputs:
+      environment: {type: string, required: true}
+      plan_only: {type: boolean, default: false}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  models:
+    name: ${{ inputs.plan_only && 'plan' || 'deploy' }} models (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: model-${{ inputs.environment }}
+    concurrency:
+      group: models-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      STACK: gateway/terraform/platform-deployment
+      TF_VAR_portal_anonymous: ${{ vars.PORTAL_ANONYMOUS || 'false' }}
+      # The environment's coordinates: variables of the GitHub environment (nothing about environments is in Git).
+      APIM_SUBSCRIPTION_ID: ${{ vars.APIM_SUBSCRIPTION_ID }}
+      APIM_RESOURCE_GROUP: ${{ vars.APIM_RESOURCE_GROUP }}
+      APIM_NAME: ${{ vars.APIM_NAME }}
+      MODELS_PRODUCT: ${{ vars.MODELS_PRODUCT }}
+      TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_apim_subscription_id: ${{ vars.APIM_SUBSCRIPTION_ID }}
+      TF_VAR_apim_resource_group: ${{ vars.APIM_RESOURCE_GROUP }}
+      TF_VAR_apim_name: ${{ vars.APIM_NAME }}
+      TF_VAR_models_product: ${{ vars.MODELS_PRODUCT }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          terraform: "true"
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: ./.github/actions/tf-init
+        with:
+          stack: ${{ env.STACK }}
+          key: ai-gateway-models-${{ inputs.environment }}.tfstate
+          resource-group: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          storage-account: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          container: ${{ vars.TF_STATE_CONTAINER }}
+      - name: Plan
+        run: |
+          terraform -chdir=$STACK plan -input=false -out=tfplan -no-color | tee plan.txt
+          { echo "### Model platform (${{ inputs.environment }}): plan"; echo '```'; grep -E '^(Plan:|No changes|  # )' plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Apply
+        if: ${{ !inputs.plan_only }}
+        run: terraform -chdir=$STACK apply -input=false tfplan
+      - name: Smoke test and Developer Portal
+        if: ${{ !inputs.plan_only }}
+        run: |
+          python gateway/scripts/model_smoke.py models
+          python gateway/scripts/publish_portal.py "models ${GITHUB_SHA::7}"

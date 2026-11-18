@@ -1,0 +1,90 @@
+# Release of the AI platform, stage by stage: dev → uat → prd. Called by release.yml.
+#
+#   detect ─► stage dev:  gateway policy ─► models        merges to main, manual runs, release tags (PRs: plans)
+#                 │ green, same commit
+#             stage uat:  gateway policy ─► models        release tags v*: approval (model-uat)
+#                 │ green
+#             stage prd:  gateway policy ─► models        release tags v*: approval (model-prd)
+#
+# A stage runs only if the repository variable PLATFORM_ENVIRONMENTS lists it (today: dev; uat and prd are added
+# once they have their own resources) and the previous stage succeeded or had nothing to do. Within a stage, only what
+# changed runs: gateway/policy-fragments or the gateway-policies stack -> the policy unit; gateway/foundry-accounts or
+# the platform-deployment stack -> the models unit. Manual runs and release tags run both.
+# Each unit runs in the GitHub environment model-<env>, whose variables hold the environment's coordinates and
+# pipeline identity, and whose protection rules (required reviewers on uat and prd) approve the deployment.
+name: _release
+
+on:
+  workflow_call:
+    inputs:
+      plan_only: {type: boolean, default: false}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.plan.outputs.environments }}
+      policies: ${{ steps.plan.outputs.policies }}
+      models: ${{ steps.plan.outputs.models }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          ENVIRONMENTS: ${{ vars.PLATFORM_ENVIRONMENTS }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ALL: ${{ github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          python3 scripts/release_plan.py "${ENVIRONMENTS:-dev}" $([ "$ALL" = "true" ] && echo --all) --base "$BASE" | tee -a "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------- stage dev (merges to main, manual runs, release tags; PR plans)
+  dev-policies:
+    needs: [detect]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && contains(fromJson(needs.detect.outputs.environments), 'dev') && needs.detect.outputs.policies == 'true' }}
+    uses: ./.github/workflows/_policies.yml
+    with:
+      environment: dev
+      plan_only: ${{ inputs.plan_only }}
+
+  dev-models:
+    needs: [detect, dev-policies]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && contains(fromJson(needs.detect.outputs.environments), 'dev') && needs.detect.outputs.models == 'true' && needs.dev-policies.result != 'failure' }}
+    uses: ./.github/workflows/_models.yml
+    with:
+      environment: dev
+      plan_only: ${{ inputs.plan_only }}
+
+  # ---------------------------------------------------------------- stage uat (release tags v*, after dev; approval)
+  uat-policies:
+    needs: [detect, dev-policies, dev-models]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && !inputs.plan_only && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && contains(fromJson(needs.detect.outputs.environments), 'uat') && needs.detect.outputs.policies == 'true' && needs.dev-policies.result != 'failure' && needs.dev-models.result != 'failure' }}
+    uses: ./.github/workflows/_policies.yml
+    with:
+      environment: uat
+
+  uat-models:
+    needs: [detect, dev-policies, dev-models, uat-policies]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && !inputs.plan_only && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && contains(fromJson(needs.detect.outputs.environments), 'uat') && needs.detect.outputs.models == 'true' && needs.dev-policies.result != 'failure' && needs.dev-models.result != 'failure' && needs.uat-policies.result != 'failure' }}
+    uses: ./.github/workflows/_models.yml
+    with:
+      environment: uat
+
+  # ---------------------------------------------------------------- stage prd (release tags v*, after uat; approval)
+  prd-policies:
+    needs: [detect, dev-policies, dev-models, uat-policies, uat-models]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && !inputs.plan_only && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && contains(fromJson(needs.detect.outputs.environments), 'prd') && needs.detect.outputs.policies == 'true' && needs.dev-policies.result != 'failure' && needs.dev-models.result != 'failure' && needs.uat-policies.result != 'failure' && needs.uat-models.result != 'failure' }}
+    uses: ./.github/workflows/_policies.yml
+    with:
+      environment: prd
+
+  prd-models:
+    needs: [detect, dev-policies, dev-models, uat-policies, uat-models, prd-policies]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && !inputs.plan_only && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && contains(fromJson(needs.detect.outputs.environments), 'prd') && needs.detect.outputs.models == 'true' && needs.dev-policies.result != 'failure' && needs.dev-models.result != 'failure' && needs.uat-policies.result != 'failure' && needs.uat-models.result != 'failure' && needs.prd-policies.result != 'failure' }}
+    uses: ./.github/workflows/_models.yml
+    with:
+      environment: prd

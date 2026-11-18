@@ -1,5 +1,13 @@
 # Plan test with mocked providers: the model definitions in gateway/foundry-accounts/ become a deployment,
-# a backend, a registry entry and a kill switch per model. No Azure access.
+# a backend, a registry entry and a kill switch per model. No Azure access. Fixture platform coordinates (in the
+# pipeline: the GitHub environment's variables); environment dev deploys the accounts with environment: dev.
+variables {
+  environment          = "dev"
+  apim_subscription_id = "00000000-0000-0000-0000-000000000000"
+  apim_resource_group  = "rg"
+  apim_name            = "apim"
+}
+
 mock_provider "azurerm" {
   mock_data "azurerm_api_management" {
     defaults = {

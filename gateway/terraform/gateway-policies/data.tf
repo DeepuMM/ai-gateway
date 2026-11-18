@@ -14,11 +14,11 @@ data "azurerm_cognitive_account" "content_safety" {
   lifecycle {
     precondition {
       condition     = local.content_safety_set
-      error_message = "platform/environments/${var.environment}.yaml needs gateway.content_safety (account_name, resource_group): the Azure AI Content Safety account the gateway checks prompts with."
+      error_message = "Environment ${var.environment} needs the Azure AI Content Safety account the gateway checks prompts with: GitHub variables CONTENT_SAFETY_ACCOUNT and CONTENT_SAFETY_RESOURCE_GROUP."
     }
     postcondition {
       condition     = self.kind == "ContentSafety"
-      error_message = "gateway.content_safety.account_name must be an Azure AI Content Safety account (kind ContentSafety)."
+      error_message = "CONTENT_SAFETY_ACCOUNT must be an Azure AI Content Safety account (kind ContentSafety)."
     }
   }
 }
