@@ -6,8 +6,8 @@ models through an *AI Gateway connection*, and their agents use `"<connection>/<
 `platform-models/gpt-5.4-mini`.
 
 This repository releases two things, through one release workflow with stages dev → uat → prd
-([Pipelines](../README.md#pipelines)): the **models** (is this model available on the platform? unit `_models`) and
-the **gateway policy** (the shared policy fragments every model, tool and agent API includes, unit `_policies`,
+([Pipelines](../README.md#pipelines)): the **models** (is this model available on the platform? job `models`) and
+the **gateway policy** (the shared policy fragments every model, tool and agent API includes, job `policies`,
 [below](#gateway-policy-the-shared-policy-fragments)). Whether a use case can use a model, and how much, is
 decided by **use-case onboarding** in the project repository
 ([agent-deployment](https://github.com/DeepuMM/agent-deployment#use-case-onboarding)): it creates the use case's
@@ -19,7 +19,7 @@ writes.
 | Question | Is this model available on the platform? |
 | Change | `gateway/foundry-accounts/<account>/models/<model>/` |
 | Owner | Platform team |
-| Workflow | `release.yml` → `_release.yml` → unit `_models.yml` |
+| Workflow | `release.yml` → `_stage.yml`: job `models` of `_stage.yml` |
 | Terraform stack | `gateway/terraform/platform-deployment` |
 | State file | `ai-gateway-models-<env>.tfstate` |
 
@@ -31,7 +31,7 @@ model that the gateway has registered.
 
 ```
 gateway/foundry-accounts/<account>/models/<model>/            (project repository) projects/<project>/project.yaml
-        │  release: _models unit                                     │  use-case onboarding
+        │  release: models job                                     │  use-case onboarding
         ▼                                                           ▼
   deployment in <account> ◄── APIM backend ◄──── models/<project> API ◄──── AI Gateway connection in the project's
   (capacity, guardrail)       registry model-meta-<model>  (token check, kill    own Foundry project; agents use
@@ -51,7 +51,7 @@ flowchart LR
     B["Request models<br/>projects/&lt;project&gt;/project.yaml (models:)"]
     C["Agents use<br/>model: platform-models/&lt;model&gt;"]
   end
-  A -->|PR + merge| P2["release: _models unit<br/>(dev; uat, prd on tags)"]
+  A -->|PR + merge| P2["release: models job<br/>(dev; uat, prd on tags)"]
   P2 -->|"writes registry<br/>model-meta-* in APIM"| REG[("Gateway registry<br/>(APIM named values)")]
   B -->|PR + merge| AD["project release<br/>(project repository)"]
   AD -->|first| P3["use-case onboarding<br/>(project repository)"]
@@ -61,7 +61,7 @@ flowchart LR
   C --> AD
 ```
 
-### The models unit
+### The models job
 
 **Triggers** (`release.yml`)
 
@@ -69,12 +69,12 @@ flowchart LR
 |---|---|
 | Pull request touching `gateway/foundry-accounts/**` or `gateway/terraform/platform-deployment/**` | plan in dev; the plan is shown in the run summary |
 | Merge to `main` with the same paths | stage dev: plan, **apply**, smoke test, Developer Portal |
-| Release tag `v*`, manual run | every unit: dev (and on a tag uat, prd after approval, when `PLATFORM_ENVIRONMENTS` lists them) |
+| Release tag `v*`, manual run | every job: dev (and on a tag uat, prd after approval, when `PLATFORM_ENVIRONMENTS` lists them) |
 
 ```mermaid
 flowchart TD
   T([PR / merge / tag / manual]) --> D["detect: what changed (scripts/release_plan.py)<br/>stages from PLATFORM_ENVIRONMENTS"]
-  D --> L["_models.yml per stage, in GitHub environment model-&lt;env&gt;<br/>(approval on uat and prd)"]
+  D --> L["_stage.yml per stage (job models), in GitHub environment model-&lt;env&gt;<br/>(approval on uat and prd)"]
   L --> I["Sign in (OIDC) · terraform init<br/>state: ai-gateway-models-&lt;env&gt;.tfstate"]
   I --> P["Plan + validation<br/>accounts with environment: &lt;env&gt; · name = folder · format allowed · api/status valid"]
   P -->|pull request| S1([Stop: plan in the run summary])
@@ -87,7 +87,7 @@ flowchart TD
 | Step | What it does | Fails when |
 |---|---|---|
 | Checks (`ci.yml`) | Terraform format, validate, plan tests with mocked Azure | a file is badly formatted or a test fails |
-| Detect | which units and stages run | — |
+| Plan (`plan` job) | which jobs run in the stage | — |
 | Sign in + init | GitHub OIDC as the environment's pipeline identity; Terraform state in the environment's storage (GitHub variables) | the identity or its federated credential is missing |
 | Plan | computes the changes for the hosting accounts of the stage's environment and checks every `model.yaml` | does not fail on a bad `model.yaml` today: the checks only warn (see Validation) |
 | Apply | deploys or updates each model in its hosting account; creates or updates its backend, registry entry, kill switch (only created, never re-enabled) and the product with the catalog | Azure refuses (quota, permissions) |
@@ -98,7 +98,7 @@ flowchart TD
 
 | Definition | Field | Meaning |
 |---|---|---|
-| `gateway/foundry-accounts/<account>/account.yaml` | `environment` | the one environment whose model unit deploys this account (`dev`) |
+| `gateway/foundry-accounts/<account>/account.yaml` | `environment` | the one environment whose `models` job deploys this account (`dev`) |
 | `projects/<project>/project.yaml` (project repository) | `environments` | the stages the project deploys to, in order (default `[dev]`) |
 | repository variable `PLATFORM_ENVIRONMENTS` | | the stages this repository deploys to, in order (`dev`) |
 
@@ -194,7 +194,7 @@ token limits and content safety settings; the shared fragments `model-api-caller
 capacity in this registry) and its AI Gateway connection. See
 [agent-deployment: use-case onboarding](https://github.com/DeepuMM/agent-deployment#use-case-onboarding).
 
-Tools (MCP servers) belong to projects too: the project repository's tool unit (`_tool`) creates, per project-owned
+Tools (MCP servers) belong to projects too: the project repository's `tool` job creates, per project-owned
 tool, a gateway API `tools/<project>/<tool>/mcp` whose policy includes the shared fragments `tool-caller` and
 `tool-route`, its kill switch `ks-tool-<project>-<tool>` and its registry entry `tool-meta-<project>-<tool>`;
 onboarding creates the Foundry RemoteTool connections of the projects that use it.
@@ -205,13 +205,13 @@ identity, and the team that owns the tool grants it access. See
 ## Gateway policy: the shared policy fragments
 
 The policy logic shared by every project model API, tool API, project agent API and agent operation is in APIM
-policy fragments, one per file in `gateway/policy-fragments/`. The `_policies` unit deploys them, stage by stage;
+policy fragments, one per file in `gateway/policy-fragments/`. The `policies` job deploys them, stage by stage;
 the agent and project pipelines only write thin policies that include them by name.
 
 | | |
 |---|---|
 | Change | `gateway/policy-fragments/<id>.xml` (file name = fragment ID) |
-| Workflow | `release.yml` → `_release.yml` → unit `_policies.yml` |
+| Workflow | `release.yml` → `_stage.yml`: job `policies` of `_stage.yml` |
 | Terraform stack | `gateway/terraform/gateway-policies` (fragments, the named values `gateway-tenant-id` and `ks-gateway-all` (global kill switch), the Content Safety backend `content-safety`, the Application Insights logger) |
 | State file | `ai-gateway-policies-<env>.tfstate` |
 | Stages | dev on merge; uat and prd on release tags, after approval, when `PLATFORM_ENVIRONMENTS` lists them |
@@ -243,9 +243,9 @@ evaluation gate: review it like platform code, and let it prove itself in dev be
 
 | Change | What runs (`release.yml`) |
 |---|---|
-| `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` | `_models` (PR: plan in dev; merge: dev apply + smoke) |
-| `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` | `_policies` (PR: plan in dev; merge: dev apply + gateway smoke test) |
-| release tag `v*`, manual run | both units; on a tag dev, then uat and prd after approval |
+| `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` | `models` (PR: plan in dev; merge: dev apply + smoke) |
+| `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` | `policies` (PR: plan in dev; merge: dev apply + gateway smoke test) |
+| release tag `v*`, manual run | both jobs; on a tag dev, then uat and prd after approval |
 | anything (`ci.yml`) | format, validate and plan tests of both stacks |
 
 Projects, onboarding, tools and agents: the project repository's workflows.
@@ -306,8 +306,8 @@ pipelines' smoke tests cover most rows; the others are one-off manual checks.
 
 | Check | Proves | How |
 |---|---|---|
-| Models applied | deployment, backend, registry entry, kill switch and product exist per model | `_models` smoke test |
-| Gateway policy applied | every shared fragment, `gateway-tenant-id`, `ks-gateway-all` and the Content Safety backend are on the gateway | `_policies` smoke test |
+| Models applied | deployment, backend, registry entry, kill switch and product exist per model | `models` smoke test |
+| Gateway policy applied | every shared fragment, `gateway-tenant-id`, `ks-gateway-all` and the Content Safety backend are on the gateway | `policies` smoke test |
 | A project's agent answers through its model connection | onboarding wired the project's model API and AI Gateway connection | onboarding smoke test (temporary agent) |
 | Another identity calls a project's model API | only the project's Foundry identity is accepted (`401` otherwise) | onboarding smoke test |
 | The same prompt in two projects with different content-safety settings | per-project thresholds are applied at the gateway | onboarding smoke test (content-safety proof) |
