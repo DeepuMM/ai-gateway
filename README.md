@@ -257,6 +257,8 @@ Each agent operation and project API policy only sets its own values as context 
 | `model-api-caller` | project model API policy (project repository's use-case onboarding) | only the project's Foundry identity (token claim `xms_mirid`; tenant from named value `gateway-tenant-id`) |
 | `model-api-route` | project model API policy, after its routing table | global kill switch `ks-gateway-all` (503), 404 `MODEL_NOT_ALLOWED`, model kill switch, token limit, backend, managed identity |
 | `model-content-safety` | project model API policy, after `model-api-route` | Azure AI Content Safety on the prompt (403 if flagged), settings per model (model, else project, else platform defaults), see [Content safety](#content-safety) |
+| `tool-caller` | tool API policy (project repository's use-case onboarding), first | only the identities of the projects the tool is shared with (owner and `shared_with`, token claim `xms_mirid`, `401 CALLER_NOT_ALLOWED`); removes the caller's token so it never reaches the tool |
+| `tool-route` | tool API policy, after `tool-caller` | global kill switch and the tool's `ks-tool-<project>-<tool>` (503), calls per minute per calling project, refuses MCP `tools/call` for any tool the owner didn't expose (JSON-RPC error `TOOL_NOT_ALLOWED`); responses stream through unbuffered |
 
 The project model API policy keeps only its routing table (allowed models with their kill switch, token limits,
 backend and deployment).
@@ -460,7 +462,7 @@ deployment, no pipeline run and no change in Git: the gateway simply refuses the
 `503 AI_ROUTE_SUSPENDED`. Use it when an agent or a model misbehaves (wrong or harmful answers, a data leak, a
 runaway cost, an incident at the model provider) and you need it stopped *now*, before anyone has worked out a fix.
 
-### The three switches
+### The switches
 
 Each switch is an APIM **named value** whose value is `active` or anything else (by convention `suspended`).
 
@@ -469,6 +471,7 @@ Each switch is an APIM **named value** whose value is `active` or anything else 
 | `ks-gateway-all` | **everything** on the gateway: every agent and every project model API | every caller of every project | `gateway-policy-deployment` (one per gateway) |
 | `ks-model-<model>` | one **model** (e.g. `ks-model-gpt-5-4-mini`) | every agent and evaluation of every project that uses the model | `model-platform-deployment` (one per model) |
 | `ks-agent-<agent>` | one **agent** (e.g. `ks-agent-expense-policy-agent`) | callers of that agent only; the project's other agents keep working | `agent-deploy` (`register`, one per agent) |
+| `ks-tool-<project>-<tool>` | one **tool** (e.g. `ks-tool-models-demo-ms-learn`) | every agent that uses the tool (the owner's and those it is shared with); the agents keep answering, their calls to that tool fail | use-case onboarding (one per project-owned tool) |
 
 Use the narrowest switch that stops the problem: an agent's switch for a bad agent, a model's switch for a bad
 model, the global switch only when you can't tell yet what is wrong or everything must stop.

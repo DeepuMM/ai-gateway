@@ -199,6 +199,13 @@ token limits and content safety settings; the shared fragments `model-api-caller
 capacity in this registry) and its AI Gateway connection. See
 [agent-deployment: use-case onboarding](https://github.com/DeepuMM/agent-deployment#use-case-onboarding).
 
+Tools (MCP servers) belong to projects too: the same onboarding creates, per project-owned tool, a gateway API
+`tools/<project>/<tool>` whose policy includes the shared fragments `tool-caller` and `tool-route`, its kill switch
+`ks-tool-<project>-<tool>`, its registry entry `tool-meta-<project>-<tool>` and the Foundry RemoteTool connections.
+This repository owns only the two fragments. When a tool's backend needs credentials, the gateway uses APIM's managed
+identity, and the team that owns the tool grants it access. See
+[agent-deployment: tools](https://github.com/DeepuMM/agent-deployment#tools-project-owned-mcp-servers).
+
 ## Gateway policy deployment (shared policy fragments)
 
 The policy logic shared by every project model API, project agent API and agent operation is in APIM policy
@@ -229,7 +236,7 @@ at once and has no evaluation gate: review it like platform code.
 
 - **Stop a model for everyone:** APIM → Named values → `ks-model-<model>` → `suspended`. Callers get
   `503 AI_ROUTE_SUSPENDED`. No pipeline run re-enables it.
-- **Stop everything on the gateway:** `ks-gateway-all` → `suspended` (every agent and model API). How the three kill
+- **Stop everything on the gateway:** `ks-gateway-all` → `suspended` (every agent and model API). How the kill
   switches (gateway, model, agent) work together: [Kill switches](../README.md#kill-switches).
 - **Stop one project's access:** remove the model from its `models.allowed` (or set a very low limit) and merge.
 - **Roll back a model change:** revert the commit and merge; the plan shows the change back.

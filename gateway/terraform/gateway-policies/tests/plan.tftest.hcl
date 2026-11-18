@@ -28,7 +28,7 @@ run "deploys_shared_policy_fragments" {
   command = plan
 
   assert {
-    condition = alltrue([for id in ["agent-guardrails", "agent-caller", "agent-route", "project-inbound", "project-outbound", "model-api-caller", "model-api-route", "model-content-safety"] :
+    condition = alltrue([for id in ["agent-guardrails", "agent-caller", "agent-route", "project-inbound", "project-outbound", "model-api-caller", "model-api-route", "model-content-safety", "tool-caller", "tool-route"] :
     contains(keys(azurerm_api_management_policy_fragment.shared), id)])
     error_message = "Every fragment the policy templates include should be deployed."
   }
@@ -93,6 +93,17 @@ run "deploys_shared_policy_fragments" {
   assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "LastOrDefault(m => (string)m[\"role\"] == \"user\")") && strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "<set-body>@((string)context.Variables[\"cs-original-body\"])</set-body>")
     error_message = "model-content-safety should check only the latest user message and restore the full request for the model."
+  }
+
+  assert {
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "<audience>https://cognitiveservices.azure.com</audience>") && strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "tool-callers") && strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "<set-header name=\"Authorization\" exists-action=\"delete\" />")
+    error_message = "tool-caller should accept only the projects the tool is shared with and never pass their token to the tool."
+  }
+
+  assert {
+    condition = alltrue([for s in ["{{ks-gateway-all}}", "tool-status", "<rate-limit-by-key", "tools/call", "TOOL_NOT_ALLOWED"] :
+    strcontains(azurerm_api_management_policy_fragment.shared["tool-route"].value, s)])
+    error_message = "tool-route should check both kill switches, limit calls and refuse tools the owner didn't expose."
   }
 }
 
