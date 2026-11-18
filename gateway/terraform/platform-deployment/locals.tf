@@ -1,7 +1,16 @@
 locals {
   repo_root    = "${path.module}/../../.."
   accounts_dir = "${local.repo_root}/gateway/foundry-accounts"
-  env          = yamldecode(file("${local.repo_root}/platform/environments/${var.environment}.yaml"))
+  # The environment's coordinates, from the platform variables (GitHub environment variables).
+  env = {
+    gateway = {
+      subscription_id  = var.apim_subscription_id
+      resource_group   = var.apim_resource_group
+      apim_name        = var.apim_name
+      models_product   = var.models_product
+      portal_anonymous = var.portal_anonymous
+    }
+  }
 
   # One entry per hosting account of this environment: the folder name is the Azure resource name.
   accounts = {

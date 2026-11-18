@@ -1,8 +1,14 @@
 # Plan test with mocked providers: every file in gateway/policy-fragments/ becomes an APIM policy fragment, and every
-# fragment a policy template includes has a file. No Azure access. Runs against the sandbox environment file, which
-# has the Content Safety account (gateway.content_safety).
+# fragment a policy template includes has a file. No Azure access. Fixture platform coordinates (in the pipeline: the
+# GitHub environment's variables).
 variables {
-  environment = "sandbox"
+  environment                   = "dev"
+  tenant_id                     = "fcf67057-50c9-4ad4-98f3-ffca64add9e9"
+  apim_subscription_id          = "00000000-0000-0000-0000-000000000000"
+  apim_resource_group           = "rg"
+  apim_name                     = "apim"
+  content_safety_account        = "cs-sbx-bbf0o"
+  content_safety_resource_group = "rg-ai-gateway-sandbox"
 }
 
 mock_provider "azapi" {}
@@ -42,7 +48,7 @@ run "deploys_shared_policy_fragments" {
   }
   assert {
     condition     = azurerm_api_management_named_value.tenant_id.value == "fcf67057-50c9-4ad4-98f3-ffca64add9e9"
-    error_message = "gateway-tenant-id should be the environment's tenant (sandbox.yaml)."
+    error_message = "gateway-tenant-id should be the environment's tenant (AZURE_TENANT_ID)."
   }
   assert {
     condition     = azurerm_api_management_named_value.kill_switch_all.name == "ks-gateway-all" && azurerm_api_management_named_value.kill_switch_all.value == "active"
@@ -125,7 +131,8 @@ run "gateway_telemetry_when_configured" {
   command = plan
 
   variables {
-    environment = "test" # test.yaml has gateway.app_insights
+    app_insights_name           = "aiazrgtstmodelnpr013471ad" # APP_INSIGHTS_NAME set: telemetry configured
+    app_insights_resource_group = "az-rg-tst-model-npr-01"
   }
 
   override_data {

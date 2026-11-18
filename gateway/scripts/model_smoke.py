@@ -1,6 +1,6 @@
 """Smoke test for model platform deployment, run after terraform apply.
 
-  model_smoke.py models [environment]   every model in the gateway registry: deployment healthy, backend registered,
+  model_smoke.py models                 every model in the gateway registry: deployment healthy, backend registered,
                                         kill switch state
 
 Everything is read from Azure (the registry from APIM named values model-meta-*), not from Git: the test proves what
@@ -18,14 +18,11 @@ import requests
 import yaml
 from azure.identity import AzureCliCredential
 
+from platform_env import environment
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ARM = "https://management.azure.com"
 cred = AzureCliCredential(process_timeout=60)
-
-
-def environment(name):
-    with open(os.path.join(ROOT, "platform", "environments", f"{name}.yaml"), encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
 
 
 def summary(text):
@@ -95,5 +92,6 @@ def smoke_models(env):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] != "models":
-        sys.exit("usage: model_smoke.py models [environment]   (project model access: the project repository's onboarding smoke test)")
-    smoke_models(environment(sys.argv[2] if len(sys.argv) > 2 else "test"))
+        sys.exit("usage: model_smoke.py models   (environment: the job's variables, see platform_env.py; project model "
+                 "access: the project repository's onboarding smoke test)")
+    smoke_models(environment())

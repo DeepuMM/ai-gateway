@@ -1,0 +1,32 @@
+# Releases the AI platform through _release.yml (stages dev → uat → prd):
+#   pull request changing the platform     plans (nothing changes)
+#   merge to main changing the platform    stage dev: the gateway policy and/or the models, whichever changed
+#   release tag v*                         everything: dev, then uat and prd (each after approval) when
+#                                          PLATFORM_ENVIRONMENTS lists them
+#   manual run                             everything, stage dev
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["gateway/policy-fragments/**", "gateway/terraform/gateway-policies/**", "gateway/foundry-accounts/**",
+            "gateway/terraform/platform-deployment/**"]
+  pull_request:
+    paths: ["gateway/policy-fragments/**", "gateway/terraform/gateway-policies/**", "gateway/foundry-accounts/**",
+            "gateway/terraform/platform-deployment/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: ./.github/workflows/_release.yml
+    with:
+      plan_only: ${{ github.event_name == 'pull_request' }}

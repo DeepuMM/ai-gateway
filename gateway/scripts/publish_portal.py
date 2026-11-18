@@ -1,6 +1,6 @@
 """Publishes the APIM Developer Portal, so model catalog and model API changes are visible to developers.
 
-  publish_portal.py <environment> [note]
+  publish_portal.py [note]          (environment: the job's variables, see platform_env.py)
 
 Same mechanism as the agent pipeline: a new portal revision made current.
 - The portal must be enabled (v2 tiers create APIM with it disabled): the script fails with the fix if it isn't.
@@ -14,15 +14,15 @@ import sys
 import time
 
 import requests
-import yaml
 from azure.identity import AzureCliCredential
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from platform_env import environment
+
 cred = AzureCliCredential(process_timeout=60)
 
 
-def main(environment, note):
-    env = yaml.safe_load(open(os.path.join(ROOT, "platform", "environments", f"{environment}.yaml"), encoding="utf-8"))
+def main(note):
+    env = environment()
     g = env["gateway"]
     base = (f"https://management.azure.com/subscriptions/{g['subscription_id']}/resourceGroups/{g['resource_group']}"
             f"/providers/Microsoft.ApiManagement/service/{g['apim_name']}")
@@ -60,6 +60,4 @@ def main(environment, note):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
-    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "model pipeline")
+    main(sys.argv[1] if len(sys.argv) > 1 else "model pipeline")

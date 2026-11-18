@@ -7,49 +7,88 @@ repository, **[agent-deployment](https://github.com/DeepuMM/agent-deployment)**.
 
 ## Pipelines
 
-Two GitHub Actions pipelines plus the platform stack, all signed in to Azure with GitHub OIDC (no secrets) except the
-platform stack, which a platform engineer applies.
+The platform is released by one workflow, `release.yml`, through stages **dev → uat → prd**. Each stage runs two
+**units**, each deploying one thing to one environment. All sign in to Azure with GitHub OIDC (no secrets).
 
-### 1. `model-platform-deployment`: host a model
+```
+.github/workflows/
+  release.yml    trigger (PRs, merges, release tags, manual)  ─► _release.yml
+                                                                   detect what changed
+                                                                   stage dev:  _policies ─► _models
+                                                                   stage uat:  _policies ─► _models   (tags; approval)
+                                                                   stage prd:  _policies ─► _models   (tags; approval)
+  ci.yml         repository checks (no Azure)
+.github/actions/setup, tf-init   shared steps (Python, Terraform, Azure sign-in, state backend)
+```
 
-| | |
+### Triggers
+
+| Event | Runs |
 |---|---|
-| **What it does** | For each model under `gateway/foundry-accounts/<account>/models/<model>/`: deploys it in its hosting Foundry account (version, SKU, capacity) with its **guardrail**, then makes it **available** on the gateway: an APIM **backend** pointing at the deployment, a **registry entry** `model-meta-<model>` (what projects can request), a **kill switch** `ks-model-<model>` (created `active` once, never reset), and the model in the `platform-models` **catalog**. Smoke test (deployment healthy, backend registered, kill switch set), then publishes the Developer Portal. **It creates no API anyone can call:** each project gets its own callable model API, `models/<project>`, from use-case onboarding in the project repository, and that API routes to this one shared backend. |
-| **Runs** | pull request touching `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` or `platform/environments/**`: checks and plan; merge to `main`: plan, approval, apply, smoke test; on demand |
-| **When the run fails** | During the apply, if Azure refuses a deployment (for example no quota or no permission). The plan also checks each model's definition (name the same as its folder, format allowed in its hosting account, `api` and `status` valid), but today these checks only **warn** and do not stop the run. |
-| **Terraform** | `gateway/terraform/platform-deployment`, state `ai-gateway-models-<env>.tfstate` |
+| pull request changing the platform (`gateway/policy-fragments/`, `gateway/foundry-accounts/`, the two Terraform stacks) | plans in dev (nothing changes) |
+| merge to `main` changing the platform | stage **dev**: the gateway policy and/or the models, whichever changed |
+| release tag `v*` | everything: **dev**, then **uat** and **prd**, each after approval |
+| manual run | everything, stage dev |
+| any pull request or merge (`ci.yml`) | Terraform format, validate and plan tests of both stacks; scripts parse |
 
-### 2. `gateway-policy-deployment`: the shared gateway policy
+### Units
 
-| | |
-|---|---|
-| **What it does** | Deploys the **policy fragments** in `gateway/policy-fragments/` (kill switches, limits, routing, identity check, content safety) that every project's agent API and model API include, the **global kill switch** `ks-gateway-all` (created `active` once), the named value `gateway-tenant-id`, and the **Content Safety backend** `content-safety` (managed identity). A change reaches every project at once, with no project redeployed. Gateway smoke test: every fragment is on the gateway, the global kill switch state, the model registry. |
-| **Runs** | pull request touching `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` or `platform/environments/**`: checks and plan; merge to `main`: plan, approval, apply, smoke test, for **every** environment; on demand |
-| **When the run fails** | **In the plan, so nothing has changed yet:** a fragment file doesn't start with `<fragment>`, or the environment file has no `gateway.content_safety`. **During the apply:** APIM refuses a fragment because its policy is invalid. Fragments applied before it in that run stay; fix the file and run again. |
-| **Terraform** | `gateway/terraform/gateway-policies`, state `ai-gateway-policies-<env>.tfstate` |
+| Unit | What it does | Terraform state |
+|---|---|---|
+| `_policies.yml`: the shared gateway policy | the **policy fragments** in `gateway/policy-fragments/` (kill switches, limits, routing, identity checks, content safety) that every project's agent, model and tool API includes; the **global kill switch** `ks-gateway-all` (created `active` once); the named value `gateway-tenant-id`; the **Content Safety backend** `content-safety` (managed identity); the gateway's Application Insights logger. A change reaches every project of the environment at once, with no project redeployed. Smoke test: every fragment is on the gateway, the global kill switch state, the model registry | `ai-gateway-policies-<env>.tfstate` |
+| `_models.yml`: host the models | for each model of the environment's hosting accounts (`gateway/foundry-accounts/<account>/` with `environment: <env>`): the deployment (version, SKU, capacity) with its **guardrail**, an APIM **backend**, a **registry entry** `model-meta-<model>`, a **kill switch** `ks-model-<model>` (created `active` once), the model in the `platform-models` **catalog**. Smoke test (deployment healthy, backend registered, kill switch set), then the Developer Portal. **It creates no API anyone can call:** each project gets its own model API, `models/<project>`, from use-case onboarding in the project repository | `ai-gateway-models-<env>.tfstate` |
 
-### 3. Platform stack (`gateway/sandbox`, applied by a platform engineer)
+**When a run stops, nothing has changed yet** if it stops in a plan: a fragment file doesn't start with `<fragment>`,
+or the environment has no Content Safety account. During an apply, Azure can refuse a change (an invalid policy, no
+quota or permission); what was applied before it in that run stays; fix and run again.
+
+### Stages and promotion
+
+| Stage | Runs on | Approval | GitHub environment |
+|---|---|---|---|
+| **dev** | merges to `main`, manual runs, release tags | none | `model-dev` |
+| **uat** | release tags `v*`, after dev succeeded for that commit | required reviewers | `model-uat` |
+| **prd** | release tags `v*`, after uat succeeded | required reviewers | `model-prd` |
+
+- A stage runs only if the **repository variable `PLATFORM_ENVIRONMENTS`** lists it, comma-separated in promotion
+  order. Today it is `dev`: uat and prd have GitHub environments (with approval) but no resources of their own yet,
+  and a stage that pointed at dev's gateway with its own Terraform state would try to create what dev already owns.
+  Add them (`dev,uat,prd`) once they have their own resources.
+- A tag promotes **exactly the tagged commit**. Approval is GitHub's environment protection: each unit of uat and prd
+  waits until a reviewer approves it in the run (Actions > the run > Review deployments).
+- The shared policy has no evaluation gate and reaches every project of an environment at once; the stages are what
+  let a fragment change prove itself in dev before uat and prd.
+- A model-hosting account belongs to one environment (`account.yaml` `environment`). Offering a model in uat or prd
+  means adding it under that environment's account: a deliberate choice per environment, not a copy of dev.
+- The project repositories release on their own tags; in each environment a project's plan stops with "run the
+  gateway policy first" if a fragment it needs isn't deployed there yet.
+
+### Platform stack (`gateway/sandbox`, applied by a platform engineer)
 
 Creates the platform an environment runs on: APIM, the Foundry accounts for models and for agents, the Azure AI
 Content Safety account, Terraform state storage, the pipeline identity with its roles and its GitHub trust (for both
 repositories), and APIM's own roles. Local state; see [gateway/sandbox/README.md](gateway/sandbox/README.md). Its
-output `environment_file` is `platform/environments/<env>.yaml`.
+output is the set of values for `scripts/set_github_environment.sh` (below).
 
-### Variables
+### Environment settings: GitHub variables
 
-Set per GitHub environment (`sandbox`; test: `model-test`), as **variables**, not secrets:
+Nothing about an environment is kept in this repository. Each GitHub environment `model-<env>` holds its coordinates
+as **variables** (not secrets); the units pass them to Terraform (`TF_VAR_*`) and to the scripts
+(`gateway/scripts/platform_env.py`). They are written by `scripts/set_github_environment.sh <env> KEY=VALUE ...`:
 
-| Variable | Used by | Value (sandbox) |
+| Variable | Meaning | dev (uat and prd: the same, for now) |
 |---|---|---|
-| `AZURE_CLIENT_ID` | both pipelines | client ID of the pipeline identity `id-sbx-pipeline` |
-| `AZURE_TENANT_ID` | both pipelines | the platform tenant |
-| `AZURE_SUBSCRIPTION_ID` | both pipelines | the subscription of APIM and the Foundry accounts |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | pipeline sign-in; the tenant is also `gateway-tenant-id` | `id-promptops-pipeline`, `scbx-testing` |
+| `APIM_SUBSCRIPTION_ID`, `APIM_RESOURCE_GROUP`, `APIM_NAME` | the gateway (URL `https://<APIM_NAME>.azure-api.net`) | `apim-agents-3471ad` |
+| `MODELS_PRODUCT` | the model catalog product | `platform-models` |
+| `CONTENT_SAFETY_ACCOUNT`, `CONTENT_SAFETY_RESOURCE_GROUP` | Azure AI Content Safety for the prompt checks (required) | `cs-tst-3471ad` |
+| `APP_INSIGHTS_NAME`, `APP_INSIGHTS_RESOURCE_GROUP` | gateway telemetry and token metrics (optional) | `aiazrgtstmodelnpr013471ad` |
+| `PORTAL_ANONYMOUS` | products visible in the portal without sign-in | `false` |
+| `TF_STATE_RESOURCE_GROUP`, `TF_STATE_STORAGE_ACCOUNT`, `TF_STATE_CONTAINER` | Terraform state | `stscbxtf3471ad5a` / `tfstate` |
 
-Repository variable: `MODEL_ENVIRONMENTS`, the environments the pipelines may run in (`test`; the sandbox is added only while it is used).
-
-Everything else comes from `platform/environments/<env>.yaml`: the APIM name and resource group (gateway URL
-`https://<apim_name>.azure-api.net`), the agent Foundry account, the Content Safety account, the tenant, the Terraform
-state storage. Hosting accounts are the folders under `gateway/foundry-accounts/` (`account.yaml`).
+Repository variable `PLATFORM_ENVIRONMENTS`: the stages the platform deploys to (`dev`). Hosting accounts are the
+folders under `gateway/foundry-accounts/` (`account.yaml`). The project repository keeps its own GitHub environments
+(`model-<env>`, `agent-<env>`) with the same coordinates.
 
 ### Permissions
 
@@ -59,12 +98,12 @@ state storage. Hosting accounts are the folders under `gateway/foundry-accounts/
 | | **API Management Service Contributor** | the APIM instance | backends, named values, fragments, products, portal |
 | | **Reader** | the Content Safety account | lookup for the backend |
 | | **Storage Blob Data Contributor** | the Terraform state container | state |
-| | Federated credential | the identity, trusting `repo:<owner>@<id>/ai-gateway@<id>:environment:<env>` | GitHub OIDC sign-in |
+| | Federated credential | the identity, trusting `repo:<owner>@<id>/ai-gateway@<id>:environment:model-<env>` | GitHub OIDC sign-in |
 | APIM managed identity (runtime) | **Foundry User** | each hosting account and the agent account | call the models and the agents |
 | | **Cognitive Services User** | the Content Safety account | prompt checks |
 | Platform engineer (platform stack) | Owner, or Contributor + Role Based Access Control Administrator | the platform resource group | create resources and role assignments |
 
-Step-by-step flows, triggers and validation of both pipelines: [gateway/README.md](gateway/README.md).
+Step-by-step flows, triggers and validation of both units: [gateway/README.md](gateway/README.md).
 
 The project repository's pipelines use the same pipeline identity with further roles on the agent account (see its
 README). In the sandbox, `id-sbx-pipeline` has Contributor on the resource group, which covers the Contributor-level
@@ -74,9 +113,9 @@ rows.
 
 | | **ai-gateway**, this repository (platform team) | **agent-deployment** (use-case teams) |
 |---|---|---|
-| Platform | APIM, Foundry accounts for models and for agents, Content Safety (`gateway/sandbox`); `platform/environments/` (source of truth) | a copy of the environment files |
-| Model hosting | `model-platform-deployment`: model deployments, registry, catalog | — |
-| Shared gateway policy | `gateway-policy-deployment`: policy fragments, global kill switch, Content Safety backend | — |
+| Platform | APIM, Foundry accounts for models and for agents, Content Safety (`gateway/sandbox`); the environment's coordinates as GitHub variables | a copy of the environment files |
+| Model hosting | `_models` unit: model deployments, registry, catalog | — |
+| Shared gateway policy | `_policies` unit: policy fragments, global kill switch, Content Safety backend | — |
 | Use-case onboarding | — | `use-case-onboarding`: Foundry project, model API, token budget, content safety settings, connected models |
 | Agent deployment | — | `agent-deploy`: agent versions, evaluation gate, agent API, docs, smoke test |
 
@@ -162,9 +201,9 @@ apim-agents-3471ad
 | Model API + its policy | project | `models-<project>`, path `models/<project>` | use-case onboarding, project repository |
 | `model-limit-<project>-<model>` | project and model | | use-case onboarding, project repository |
 | AI Gateway connection (in the Foundry project, not in APIM) | project | `models.connection`, unique per agent account | use-case onboarding, project repository |
-| Model backend, `ks-model-*`, `model-meta-*` | model | `model-<account>-<deployment>` | `model-platform-deployment` |
-| Product `platform-models` | gateway | | `model-platform-deployment` |
-| Policy fragments, `ks-gateway-all`, `gateway-tenant-id`, backend `content-safety` | gateway | | `gateway-policy-deployment` |
+| Model backend, `ks-model-*`, `model-meta-*` | model | `model-<account>-<deployment>` | `_models` |
+| Product `platform-models` | gateway | | `_models` |
+| Policy fragments, `ks-gateway-all`, `gateway-tenant-id`, backend `content-safety` | gateway | | `_policies` |
 
 The model deployment itself exists **once** per model in its hosting account; every project's model API routes to
 the same deployment through the same backend. What differs per project is the front door: who may call it, which
@@ -220,8 +259,10 @@ See [Shared policy](#shared-policy-policy-fragments), [Kill switches](#kill-swit
 | `gateway/policy-fragments/<id>.xml` | the shared policy logic, one APIM policy fragment per file |
 | `gateway/terraform/gateway-policies/` | gateway policy stack: fragments, global kill switch, tenant, Content Safety backend |
 | `gateway/scripts/` | model smoke test, Developer Portal publishing |
-| `platform/environments/<env>.yaml` | platform coordinates per environment (the project repository keeps a copy) |
-| `.github/workflows/` | `model-platform-deployment`, `gateway-policy-deployment` |
+| `.github/workflows/` | `release.yml` (trigger), `ci.yml`, and the shared `_release`, `_policies`, `_models` |
+| `.github/actions/` | shared steps: `setup` (Python, Terraform, Azure sign-in), `tf-init` (state backend) |
+| `scripts/release_plan.py` | which units a release runs |
+| `scripts/set_github_environment.sh`, `gateway/scripts/platform_env.py` | setting an environment's GitHub variables; reading them |
 
 ## Shared policy (policy fragments)
 
@@ -243,7 +284,7 @@ Each agent operation and project API policy only sets its own values as context 
 
 | Change | Pipeline | Agents redeployed |
 |---|---|---|
-| `gateway/policy-fragments/*.xml` (shared logic) | `gateway-policy-deployment`: plan on the PR, apply on merge (environment approval), for **every** environment; then smoke-tests every project model API and agent on that gateway | none: every agent and model API uses the new fragment at once |
+| `gateway/policy-fragments/*.xml` (shared logic) | `release` (`_policies` unit): plan on the PR, dev on merge, uat and prd on a release tag (approval), for **every** environment; then smoke-tests every project model API and agent on that gateway | none: every agent and model API uses the new fragment at once |
 | the project repository's policy templates (which values are passed, which fragments are included) | that repository's `agent-deploy` / use-case onboarding | that repository's projects |
 | an agent's limits or version | `agent-deploy`, that project | that project |
 
@@ -269,26 +310,28 @@ variables (`llm-token-limit token-quota` must be a `long`, hence `@(…L)`).
 
 ### How the fragments are deployed
 
-Only the `gateway-policy-deployment` workflow writes fragments (Terraform stack `gateway/terraform/gateway-policies`,
-state `ai-gateway-policies-<env>.tfstate`), together with the named values they read directly: `gateway-tenant-id`
-and the global kill switch `ks-gateway-all` (see [Kill switches](#kill-switches)), and the backends they call (the
-Content Safety backend `content-safety`, see [Content safety](#content-safety)). It runs for **every** environment in `platform/environments/`, in that
-environment's model GitHub environment (`test` → `model-test`), filtered by `MODEL_ENVIRONMENTS` when set:
+Only the `_policies` unit writes fragments (Terraform stack `gateway/terraform/gateway-policies`, state
+`ai-gateway-policies-<env>.tfstate`), together with the named values they read directly: `gateway-tenant-id` and the
+global kill switch `ks-gateway-all` (see [Kill switches](#kill-switches)), and the backends they call (the Content
+Safety backend `content-safety`, see [Content safety](#content-safety)). It runs stage by stage
+([Stages and promotion](#stages-and-promotion)):
 
-1. Pull request: format, validate, plan tests, and a plan per environment.
-2. Merge to `main`: plan → approval → apply → gateway smoke test (every fragment is on the gateway, the global kill
-   switch, the model registry).
+1. Pull request: format, validate, plan tests (`ci`), and a plan in dev.
+2. Merge to `main`: dev: plan → apply → gateway smoke test (every fragment is on the gateway, the global kill switch,
+   the model registry).
+3. Release tag: dev, then uat and prd, each after approval.
 
-The project repository only references fragments by name: its `agent-deploy` (`register`) and use-case onboarding
-plan check that the fragments they include are on the gateway, and stop with "run gateway-policy-deployment first"
-if not. A fragment change is verified end to end by each project's next onboarding or agent run (or a manual run).
+The project repository only references fragments by name: its agent release and onboarding plan check that the
+fragments they include are on the gateway, and stop with "run the gateway policy first" if not. A fragment change is
+verified end to end by each project's next onboarding or agent run (or a manual run).
 
 ### Change the shared policy
 
 1. Edit `gateway/policy-fragments/<id>.xml` (the file name is the fragment ID; the root element is `<fragment>`).
    A fragment reads its inputs from context variables; the comment at the top of each file lists them.
-2. Open a pull request and review the plan of every environment.
-3. Merge and approve the apply per environment. Every agent and model API uses the new logic at once.
+2. Open a pull request and review the plan.
+3. Merge: dev gets it at once. Every agent and model API of dev uses the new logic; check the projects there.
+4. Release tag: uat, then prd, each after approval.
 
 A fragment change has no evaluation gate and reaches every project at once: review it like platform code. A new
 fragment must be deployed (merged and applied) before a template that includes it is merged.
@@ -445,10 +488,10 @@ Operating it:
 
 | Piece | Where | Deployed by |
 |---|---|---|
-| The check, with the platform defaults | fragment `model-content-safety` (`llm-content-safety`), included by every project model API after `model-api-route` | `gateway-policy-deployment` |
+| The check, with the platform defaults | fragment `model-content-safety` (`llm-content-safety`), included by every project model API after `model-api-route` | `_policies` unit |
 | A project's and its models' settings | in its model API policy, each model's routing-table branch sets `cs-hate`, `cs-sexual`, `cs-self-harm`, `cs-violence`, `cs-prompt-shields` for what the model or the project sets (model level wins); the fragment reads each with its platform default | use-case onboarding, project repository |
-| Azure AI Content Safety account (S0, key auth off) | `gateway.content_safety` in the environment file (sandbox: `cs-sbx-bbf0o`, created by `gateway/sandbox`) | the platform's infrastructure |
-| APIM backend `content-safety` (managed identity) | `gateway/terraform/gateway-policies` | `gateway-policy-deployment` |
+| Azure AI Content Safety account (S0, key auth off) | GitHub variables `CONTENT_SAFETY_ACCOUNT`, `CONTENT_SAFETY_RESOURCE_GROUP` (sandbox: `cs-sbx-bbf0o`, created by `gateway/sandbox`) | the platform's infrastructure |
+| APIM backend `content-safety` (managed identity) | `gateway/terraform/gateway-policies` | `_policies` unit |
 | APIM managed identity: **Cognitive Services User** on the account | `gateway/sandbox` (the pipeline identity can't assign roles) | the platform's infrastructure |
 
 To change the **platform defaults**, edit `gateway/policy-fragments/model-content-safety.xml` (every project without
@@ -468,8 +511,8 @@ Each switch is an APIM **named value** whose value is `active` or anything else 
 
 | Switch (named value) | Stops | Who is affected | Created by |
 |---|---|---|---|
-| `ks-gateway-all` | **everything** on the gateway: every agent and every project model API | every caller of every project | `gateway-policy-deployment` (one per gateway) |
-| `ks-model-<model>` | one **model** (e.g. `ks-model-gpt-5-4-mini`) | every agent and evaluation of every project that uses the model | `model-platform-deployment` (one per model) |
+| `ks-gateway-all` | **everything** on the gateway: every agent and every project model API | every caller of every project | `_policies` unit (one per gateway) |
+| `ks-model-<model>` | one **model** (e.g. `ks-model-gpt-5-4-mini`) | every agent and evaluation of every project that uses the model | `_models` unit (one per model) |
 | `ks-agent-<agent>` | one **agent** (e.g. `ks-agent-expense-policy-agent`) | callers of that agent only; the project's other agents keep working | `agent-deploy` (`register`, one per agent) |
 | `ks-tool-<project>-<tool>` | one **tool** (e.g. `ks-tool-models-demo-ms-learn`) | every agent that uses the tool (the owner's and those it is shared with); agent responses that call the tool fail; other responses are unaffected | use-case onboarding (one per project-owned tool) |
 
@@ -571,27 +614,36 @@ The change reaches the gateway within seconds. Anyone who can edit the APIM inst
   `apim-agents-3471ad developer portal`); self sign-up with email and password is off. Renew the app secret before
   it expires (November 2027). The sandbox portal (`apim-sbx-bbf0o`) shows the products to anonymous
   visitors too (`portal_anonymous: true`).
-- **Shared policy fragments:** run `gateway-policy-deployment` for the environment before the first `agent-deploy`.
+- **Shared policy fragments:** release the gateway policy to the environment (`release`, stage of that environment) before the first project release there.
 
 ## Environments
 
-Each run targets one platform environment through the GitHub environment of the same name (`sandbox`; test:
-`model-test`), whose variables hold the pipeline identity (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID`, GitHub OIDC, no secrets). The repository variable `MODEL_ENVIRONMENTS` lists the environments
-the pipelines may run in (`test`). In each environment one pipeline identity trusts both repositories.
+Each unit targets one environment through its GitHub environment `model-<env>`, whose variables hold the coordinates
+and the pipeline identity (GitHub OIDC, no secrets). In each environment one pipeline identity trusts both
+repositories.
 
-| | sandbox | test |
-|---|---|---|
-| Subscription | Visual Studio Professional (`8c85e375…`) | `scbx-testing` (`3471ad5a…`) |
-| Gateway (APIM) | `apim-sbx-bbf0o` | `apim-agents-3471ad` |
-| Model-hosting Foundry account (models only) | `aif-sbx-models-bbf0o` | `aif-tst-models-3471ad` |
-| Agent Foundry account (projects only) | `aif-sbx-agents-bbf0o` | `az-aif-tst-model-npr-01` |
-| Content Safety | `cs-sbx-bbf0o` | `cs-tst-3471ad` |
-| Pipeline identity | `id-sbx-pipeline` | `id-promptops-pipeline` |
-| GitHub environment | `sandbox` | `model-test` |
-| Projects | none (gateway only) | `models-demo`, `proj-default` |
+| | dev | uat, prd | sandbox |
+|---|---|---|---|
+| Subscription | `scbx-testing` (`3471ad5a…`) | the same as dev until their own resources exist | Visual Studio Professional (`8c85e375…`) |
+| Gateway (APIM) | `apim-agents-3471ad` | | `apim-sbx-bbf0o` |
+| Model-hosting Foundry account (models only) | `aif-tst-models-3471ad` | | `aif-sbx-models-bbf0o` |
+| Agent Foundry account (projects only) | `az-aif-tst-model-npr-01` | | `aif-sbx-agents-bbf0o` |
+| Content Safety | `cs-tst-3471ad` | | `cs-sbx-bbf0o` |
+| Pipeline identity | `id-promptops-pipeline` | | `id-sbx-pipeline` |
+| GitHub environment | `model-dev` | `model-uat`, `model-prd` (required reviewers) | `sandbox` (not a stage) |
+| In `PLATFORM_ENVIRONMENTS` | yes | not yet | no |
+| Projects | `models-demo`, `proj-default` | none yet | none (gateway only) |
 
-Models and agents are in separate Foundry accounts, so the only way an agent reaches a model is the gateway. In test
+The sandbox is a disposable copy of the platform for trying platform changes by hand (`gateway/sandbox`); the stages
+don't deploy to it.
+
+**Give uat or prd their own resources:** create them with the platform stack; create the environment's pipeline
+identity with a federated credential for `model-<env>` (and the project repository's `model-<env>`, `agent-<env>`);
+`scripts/set_github_environment.sh <env> KEY=VALUE ...` here and in the project repository; add the environment to
+`PLATFORM_ENVIRONMENTS`; add hosting accounts with `environment: <env>` and their models. The next release tag
+deploys it after approval.
+
+Models and agents are in separate Foundry accounts, so the only way an agent reaches a model is the gateway. In dev
 the agent account still holds deployments made before the platform (`gpt-5.4-mini`, `gpt-6.1-sol`,
 `text-embedding-3-small`); the platform doesn't manage them and no project uses them.
 
@@ -599,11 +651,19 @@ the agent account still holds deployments made before the platform (`gpt-5.4-min
 
 ```bash
 az login
-cd gateway/terraform/gateway-policies     # or platform-deployment
-terraform init -backend-config="resource_group_name=rg-scbx-terraform-state" -backend-config="storage_account_name=stscbxtf3471ad5a" \
-  -backend-config="container_name=tfstate" -backend-config="key=ai-gateway-policies-test.tfstate" -backend-config="use_azuread_auth=true"
-terraform test
-terraform plan -var environment=test
+# The environment's variables, as the pipeline gets them
+eval "$(gh variable list --env model-dev --json name,value -q '.[] | "export \(.name)=\(.value)"')"
+export TF_VAR_environment=dev TF_VAR_tenant_id=$AZURE_TENANT_ID TF_VAR_apim_subscription_id=$APIM_SUBSCRIPTION_ID \
+  TF_VAR_apim_resource_group=$APIM_RESOURCE_GROUP TF_VAR_apim_name=$APIM_NAME TF_VAR_models_product=$MODELS_PRODUCT \
+  TF_VAR_content_safety_account=$CONTENT_SAFETY_ACCOUNT TF_VAR_content_safety_resource_group=$CONTENT_SAFETY_RESOURCE_GROUP \
+  TF_VAR_app_insights_name=$APP_INSIGHTS_NAME TF_VAR_app_insights_resource_group=$APP_INSIGHTS_RESOURCE_GROUP
+
+python3 scripts/release_plan.py dev --base HEAD~1     # what a release of this commit would run
+cd gateway/terraform/gateway-policies     # or platform-deployment (state ai-gateway-models-dev.tfstate)
+terraform test                            # mocked plan tests, no Azure access
+terraform init -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+  -backend-config="container_name=$TF_STATE_CONTAINER" -backend-config="key=ai-gateway-policies-dev.tfstate" -backend-config="use_azuread_auth=true"
+terraform plan
 cd ../../..
-python gateway/scripts/model_smoke.py models test
+python gateway/scripts/model_smoke.py models
 ```

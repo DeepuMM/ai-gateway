@@ -1,0 +1,30 @@
+# Repository checks on every pull request and merge: no Azure access. Releases: release.yml and the shared units
+# (_release, _policies, _models).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          terraform: "true"
+      - name: Scripts parse
+        run: python -m compileall -q gateway/scripts scripts
+      - name: Terraform format, validate and plan tests (mocked Azure)
+        run: |
+          for stack in gateway/terraform/gateway-policies gateway/terraform/platform-deployment; do
+            terraform -chdir=$stack fmt -check -recursive
+            terraform -chdir=$stack init -backend=false -input=false >/dev/null
+            terraform -chdir=$stack validate
+            terraform -chdir=$stack test
+          done
