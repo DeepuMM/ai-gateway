@@ -109,9 +109,9 @@ Azure resources through the GitHub environment of the same name:
 | `test` | `platform/environments/test.yaml` | `model-test` |
 | `sandbox` (disposable, `gateway/sandbox`) | `platform/environments/sandbox.yaml` | `sandbox` |
 
-Each GitHub environment holds `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. The repository variable **`MODEL_ENVIRONMENTS`** (e.g. `sandbox` or
-`sandbox,test`) lists the environments the model pipelines and the gateway policy deployment may run in (currently
-`sandbox`): add an environment only once its GitHub environment and pipeline identity are set up. `scripts/matrix.py` builds the job matrices from these fields.
+Each GitHub environment holds `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. The repository variable **`MODEL_ENVIRONMENTS`** (e.g. `test` or
+`sandbox,test`) lists the environments the model pipelines and the gateway policy deployment may run in (`test`):
+add an environment only once its GitHub environment and pipeline identity are set up. `scripts/matrix.py` builds the job matrices from these fields.
 
 ## Developer Portal (APIM)
 
@@ -181,10 +181,10 @@ into an agent account.
 | Kill switch | named value `ks-model-<model>` | created `active`; later changes are never overwritten by an apply |
 | Product | `platform-models` (from the environment file) | catalog of every model in its description; visible to the Developers group; every project's model API is added to it |
 
-### Validation (warnings in the plan, not yet blocking)
+### Validation in the plan
 
-The plan checks each model's definition, but these checks are a Terraform `check` block: they show a warning and the
-run continues. Review the plan's warnings on the pull request.
+The plan checks each model's definition in a Terraform `check` block. Findings appear as warnings in the plan on the
+pull request; the reviewer approves only a plan without warnings.
 
 - `model.yaml` `name` equals its folder name; names are lowercase letters, digits, dots and hyphens.
 - The model's format is one of its hosting account's `formats`.
@@ -266,18 +266,18 @@ Everything else comes from `platform/environments/<env>.yaml`.
 ```bash
 az login
 cd gateway/terraform/platform-deployment
-terraform init -backend-config="resource_group_name=rg-ai-gateway-sandbox" \
-  -backend-config="storage_account_name=sttfsbxbbf0o" -backend-config="container_name=tfstate" \
-  -backend-config="key=ai-gateway-models-sandbox.tfstate" -backend-config="use_azuread_auth=true"
+terraform init -backend-config="resource_group_name=rg-scbx-terraform-state" \
+  -backend-config="storage_account_name=stscbxtf3471ad5a" -backend-config="container_name=tfstate" \
+  -backend-config="key=ai-gateway-models-test.tfstate" -backend-config="use_azuread_auth=true"
 terraform test                         # plan tests with mocked providers, no Azure access
-terraform plan -var environment=sandbox  # state storage from platform/environments/sandbox.yaml
+terraform plan -var environment=test   # state storage from platform/environments/test.yaml
 
 cd ../gateway-policies                             # same init with key ai-gateway-policies-<env>.tfstate
 terraform test
-terraform plan -var environment=sandbox
+terraform plan -var environment=test
 
-python gateway/scripts/model_smoke.py models sandbox
-python gateway/scripts/publish_portal.py sandbox
+python gateway/scripts/model_smoke.py models test
+python gateway/scripts/publish_portal.py test
 ```
 
 ## Sandbox
@@ -291,36 +291,28 @@ point at it here; `projects/models-demo/` and `projects/proj-default/` in the pr
 in `gateway/sandbox` removes everything (the Foundry projects go with the agent account); then delete those paths,
 the `sandbox` GitHub environments and `sandbox` from `MODEL_ENVIRONMENTS` in both repositories.
 
-## Tested end to end (sandbox, 13 Nov 2026)
+## Verifying an environment
 
-In `gateway/sandbox` (separate hosting and agent-only Foundry accounts, APIM Basic v2), environment `sandbox`:
+After the first deployment to a new environment, and after platform changes, check the platform end to end. The
+pipelines' smoke tests cover most rows; the others are one-off manual checks.
 
-| Check | Result |
-|---|---|
-| Model platform deployment: deployment, backend, registry, kill switch, product (5 resources) | created; smoke test: deployment Succeeded, backend registered, kill switch active |
-| Model project connection for `models-demo`: plan reads the registry from APIM, checks capacity (20,000 of 50,000 TPM) | 7 resources created: model API, policy, product link, allocation, AI Gateway connection |
-| Prompt agent in the agent-only project with `model: platform-models/gpt-5.4-mini` | answers through the gateway |
-| Another identity calling the project's model API | refused (401) |
-| Kill switch `ks-model-gpt-5-4-mini` = suspended | the agent's call fails with `503 AI_ROUTE_SUSPENDED`, passed through by Foundry |
-| Agent pipeline: deploy + evaluation gate with `judge_model: platform-models/gpt-5.4-mini` | passed (relevance 3/3, coherence 3/3) |
+| Check | Proves | How |
+|---|---|---|
+| Model platform deployment applied | deployment, backend, registry entry, kill switch and product exist per model | `model-platform-deployment` smoke test |
+| Gateway policy deployment applied | every shared fragment, `gateway-tenant-id`, `ks-gateway-all` and the Content Safety backend are on the gateway | `gateway-policy-deployment` smoke test |
+| A project's agent answers through its model connection | onboarding wired the project's model API and AI Gateway connection | onboarding smoke test (temporary agent) |
+| Another identity calls a project's model API | only the project's Foundry identity is accepted (`401` otherwise) | onboarding smoke test |
+| The same prompt in two projects with different content-safety settings | per-project thresholds are applied at the gateway | onboarding smoke test (content-safety proof) |
+| An agent change goes through deploy → evaluation → gateway | only evaluated versions are served (`agent-version-<agent>` moves only after the gate) | `agent-deploy` run |
+| `ks-model-<model>`, `ks-agent-<agent>`, `ks-gateway-all` set to `suspended`, then `active` | each kill switch stops its scope (`503 AI_ROUTE_SUSPENDED`) and resumes | manual, through the gateway |
+| Token metrics in Application Insights | usage is recorded per project/model and per agent/consumer | KQL in [Token metrics](../README.md#token-metrics) |
+| Two pipeline runs for the same project at once | runs don't interfere (each run uses its own temporary smoke agent) | trigger two runs |
 
-## Tested end to end (sandbox, 16 Nov 2026): shared policy fragments
+## Policy expressions APIM accepts
 
-| Check | Result |
-|---|---|
-| `gateway-policy-deployment`: 6 fragments and `gateway-tenant-id` on `apim-sbx-bbf0o` | created (first apply failed, see below; fixed and re-applied) |
-| `model-project-connection` for `models-demo`: model API on the thin policy (routing table + `model-api-caller` / `model-api-route`) | 1 changed; an agent answers with `platform-models/gpt-5.4-mini`, another identity is refused (401) |
-| `agent-deploy` for `models-demo`: agent API on the thin policies (`agent-guardrails` and the then route fragment, `project-inbound`, `project-outbound`) | smoke test 1/1 through the gateway |
-| `agent-deploy` for `proj-default` (first deploy in the sandbox, in the `models-demo` Foundry project) | `expense-policy-agent` v1 and `leave-policy-agent` v1 passed the evaluation gate (judge `platform-models/gpt-5.4-mini`); smoke test 7/7 through `ai/proj-default` |
-| Agent change through the pipeline: one instruction line in `demo-assistant` | v2 deployed, evaluation gate passed (relevance 3/3, coherence 3/3), gateway moved `agent-version-demo-assistant` to 2, smoke test 1/1; v2 uses `platform-models/gpt-5.4-mini` |
-| Global kill switch `ks-gateway-all` (created by `gateway-policy-deployment`) set to `suspended`, then back to `active` | agent call through `ai/models-demo`: `200` → `503 AI_ROUTE_SUSPENDED` "All AI routes on this gateway are suspended…" → `200` |
-| Content safety at the gateway, platform defaults (fragment `model-content-safety`, Content Safety `cs-sbx-bbf0o`) | 8 legitimate questions answered; jailbreak prompt blocked (`403 Request failed content safety check`); a weapon request reached the model, which refused |
-| Content safety with `models-demo` `content_safety.violence: 2` | per-project setting written to the policy and applied; 3 legitimate `proj-default` questions got `403`, most likely Content Safety outages (see next row) rather than the threshold; `models-demo` returned to the defaults |
-| Intermittent `403` at the platform defaults, investigated with gateway logs | 7 of 28 legitimate questions blocked; all 7 were Content Safety `InternalError: no healthy upstream` (service unavailable), which `llm-content-safety` treats as a block; identical requests passed otherwise. Not fixed yet: [Known issue](../README.md#known-issue-content-safety-outages-look-like-content-blocks) |
-| Two pipelines smoke-testing the same project at once | they shared the temporary smoke agent and failed each other; fixed (one agent name per run) |
-| Agents use the model only through the gateway | all agents' `model` is `platform-models/gpt-5.4-mini`; connection `platform-models` targets `apim-sbx-bbf0o/models/models-demo`; the agent-only account has no deployments; the model API served the evaluation and smoke traffic |
-
-**What APIM accepts as policy expressions** (found by the first apply, then checked one by one on the sandbox):
+Which policy attributes take a policy expression decides where each value lives: values that can be expressions are
+set per project or agent as context variables and read by the shared fragments; the others stay literal in the
+project and agent policies.
 
 | Policy attribute | Expression allowed |
 |---|---|
@@ -329,17 +321,19 @@ In `gateway/sandbox` (separate hosting and agent-only Foundry accounts, APIM Bas
 | `llm-token-limit tokens-per-minute` | yes, must return `int` |
 | `llm-token-limit token-quota` | yes, must return `long` (`@(…L)`) |
 | `set-backend-service backend-id`, `rewrite-uri template` | yes |
+| `llm-content-safety` `threshold`, `shield-prompt`, `enforce-on-completions` | yes |
 
 ## Limits and notes
 
-- Connected models (AI Gateway connections) are documented by Microsoft for **prompt agents**; hosted agents
-  call the project's model API directly with their own identity. The connection type `ApiManagement` is in
-  preview and can only be created through code.
+- Agents reach platform models through the project's **AI Gateway connection** (`<connection>/<model>`): prompt
+  agents through their definition, hosted (code) agents by calling the Foundry project endpoint with that model name
+  (the pipeline passes it as `AZURE_AI_MODEL_DEPLOYMENT_NAME`). Either way Foundry calls the gateway with the
+  project's identity. The connection type `ApiManagement` is in preview and is created through code (onboarding).
 - **Guardrails** set on an agent don't apply to connected models: content safety is the guardrail on the
   deployment in the hosting account (`guardrail` in `model.yaml`), plus the gateway's Content Safety check on every
   prompt (fragment `model-content-safety`, [Content safety](../README.md#content-safety)).
-- **Evaluations work with a connected model as the AI judge** (`judge_model: platform-models/<model>`): verified in
-  the sandbox, where the agent account has no deployments at all. Other features that may need a model in the
-  agent's own account (file search embeddings, memory, Foundry IQ) still need checking before relying on them.
-- `api: anthropic` (Claude, Messages route) is not supported yet: the model API has only the chat completions
-  operation.
+- **Evaluations use a connected model as the AI judge** (`judge_model: <connection>/<model>`), so the agent account
+  needs no model deployments. Features that need a model in the agent's own account (file search embeddings,
+  memory, Foundry IQ) are outside this reference; check them before using them.
+- The model API exposes the chat completions operation (`api: openai`). Other model APIs (for example `anthropic`,
+  Messages) need their own operation and route in the model API.
