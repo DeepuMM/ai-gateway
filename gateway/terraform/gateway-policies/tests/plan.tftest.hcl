@@ -77,6 +77,11 @@ run "deploys_shared_policy_fragments" {
   }
 
   assert {
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-api-route"].value, "<llm-emit-token-metric") && strcontains(azurerm_api_management_policy_fragment.shared["agent-route"].value, "<llm-emit-token-metric")
+    error_message = "Token metrics should be emitted on both hops (model-api-route, agent-route)."
+  }
+
+  assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<validate-jwt") && strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<audience>https://ai.azure.com</audience>") && strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<set-header name=\"x-ms-user-identity\" exists-action=\"delete\" />")
     error_message = "agent-caller should validate the caller's Foundry token and drop caller-supplied identity headers."
   }
@@ -99,4 +104,35 @@ run "requires_a_content_safety_account" {
   }
 
   expect_failures = [data.azurerm_cognitive_account.content_safety]
+}
+
+run "gateway_telemetry_when_configured" {
+  command = plan
+
+  variables {
+    environment = "test" # test.yaml has gateway.app_insights
+  }
+
+  override_data {
+    target = data.azurerm_cognitive_account.content_safety
+    values = { kind = "ContentSafety", endpoint = "https://cs-tst-3471ad.cognitiveservices.azure.com/" }
+  }
+
+  override_data {
+    target = data.azurerm_application_insights.gateway[0]
+    values = {
+      id                = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.Insights/components/appi"
+      connection_string = "InstrumentationKey=00000000-0000-0000-0000-000000000000"
+    }
+  }
+
+  assert {
+    condition     = length(azurerm_api_management_logger.app_insights) == 1 && azapi_resource.diagnostic[0].body.properties.metrics == true && azapi_resource.diagnostic[0].body.properties.httpCorrelationProtocol == "W3C"
+    error_message = "With gateway.app_insights, the gateway should log to Application Insights with custom metrics and W3C correlation."
+  }
+
+  assert {
+    condition     = azapi_resource.diagnostic[0].body.properties.frontend.request.body.bytes == 0 && azapi_resource.diagnostic[0].body.properties.backend.response.body.bytes == 0
+    error_message = "Gateway telemetry must not log prompts or answers (bodies)."
+  }
 }

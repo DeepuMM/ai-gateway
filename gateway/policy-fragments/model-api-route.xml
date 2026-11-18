@@ -56,7 +56,17 @@
   <llm-token-limit counter-key="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;) + &quot;|&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;model&quot;, &quot;&quot;))"
       tokens-per-minute="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;model-tpm&quot;, 0))"
       token-quota="@(context.Variables.GetValueOrDefault&lt;long&gt;(&quot;model-tpd&quot;, 0L))" token-quota-period="Daily"
-      estimate-prompt-tokens="false" remaining-tokens-header-name="x-ratelimit-remaining-tokens" />
+      estimate-prompt-tokens="false" remaining-tokens-header-name="x-ratelimit-remaining-tokens"
+      remaining-quota-tokens-header-name="x-ratelimit-remaining-quota-tokens" tokens-consumed-header-name="x-tokens-consumed" />
+
+  <!-- Token metrics (prompt, completion, total) per project and model, to the gateway's Application Insights
+       (gateway.app_insights; custom metrics on in the gateway diagnostic). Counts come from the response's usage;
+       Foundry streams with include_usage, so streamed calls are counted too. -->
+  <llm-emit-token-metric namespace="ai-gateway">
+    <dimension name="Project" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;))" />
+    <dimension name="Model" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;model&quot;, &quot;&quot;))" />
+    <dimension name="Hop" value="model" />
+  </llm-emit-token-metric>
 
   <!-- The model's deployment in its hosting Foundry account. -->
   <set-backend-service backend-id="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;model-backend&quot;))" />
