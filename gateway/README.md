@@ -6,8 +6,8 @@ models through an *AI Gateway connection*, and their agents use `"<connection>/<
 `platform-models/gpt-5.4-mini`.
 
 This repository releases two things, through one release workflow with stages dev → uat → prd
-([Pipelines](../README.md#pipelines)): the **models** (is this model available on the platform? job `models`) and
-the **gateway policy** (the shared policy fragments every model, tool and agent API includes, job `policies`,
+([Pipelines](../README.md#pipelines)): the **models** (is this model available on the platform? `model-platform-deployment`) and
+the **gateway policy** (the shared policy fragments every model, tool and agent API includes, `gateway-policy-deployment`,
 [below](#gateway-policy-the-shared-policy-fragments)). Whether a use case can use a model, and how much, is
 decided by **use-case onboarding** in the project repository
 ([agent-deployment](https://github.com/DeepuMM/agent-deployment#use-case-onboarding)): it creates the use case's
@@ -19,7 +19,7 @@ writes.
 | Question | Is this model available on the platform? |
 | Change | `gateway/foundry-accounts/<account>/models/<model>/` |
 | Owner | Platform team |
-| Workflow | `release.yml` → `_stage.yml`: job `models` of `_stage.yml` |
+| Workflow | `model-platform-deployment.yml` (unit `_models.yml`) |
 | Terraform stack | `gateway/terraform/platform-deployment` |
 | State file | `ai-gateway-models-<env>.tfstate` |
 
@@ -31,7 +31,7 @@ model that the gateway has registered.
 
 ```
 gateway/foundry-accounts/<account>/models/<model>/            (project repository) projects/<project>/project.yaml
-        │  release: models job                                     │  use-case onboarding
+        │  model-platform-deployment                                │  use-case onboarding
         ▼                                                           ▼
   deployment in <account> ◄── APIM backend ◄──── models/<project> API ◄──── AI Gateway connection in the project's
   (capacity, guardrail)       registry model-meta-<model>  (token check, kill    own Foundry project; agents use
@@ -51,7 +51,7 @@ flowchart LR
     B["Request models<br/>projects/&lt;project&gt;/project.yaml (models:)"]
     C["Agents use<br/>model: platform-models/&lt;model&gt;"]
   end
-  A -->|PR + merge| P2["release: models job<br/>(dev; uat, prd on tags)"]
+  A -->|PR + merge| P2["model-platform-deployment<br/>(dev; uat, prd on tags)"]
   P2 -->|"writes registry<br/>model-meta-* in APIM"| REG[("Gateway registry<br/>(APIM named values)")]
   B -->|PR + merge| AD["project release<br/>(project repository)"]
   AD -->|first| P3["use-case onboarding<br/>(project repository)"]
@@ -61,9 +61,9 @@ flowchart LR
   C --> AD
 ```
 
-### The models job
+### model-platform-deployment
 
-**Triggers** (`release.yml`)
+**Triggers** (`model-platform-deployment.yml`)
 
 | Event | What runs |
 |---|---|
@@ -74,7 +74,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   T([PR / merge / tag / manual]) --> D["detect: what changed (scripts/release_plan.py)<br/>stages from PLATFORM_ENVIRONMENTS"]
-  D --> L["_stage.yml per stage (job models), in GitHub environment model-&lt;env&gt;<br/>(approval on uat and prd)"]
+  D --> L["_models.yml per stage, in GitHub environment model-&lt;env&gt;<br/>(approval on uat and prd)"]
   L --> I["Sign in (OIDC) · terraform init<br/>state: ai-gateway-models-&lt;env&gt;.tfstate"]
   I --> P["Plan + validation<br/>accounts with environment: &lt;env&gt; · name = folder · format allowed · api/status valid"]
   P -->|pull request| S1([Stop: plan in the run summary])
@@ -98,7 +98,7 @@ flowchart TD
 
 | Definition | Field | Meaning |
 |---|---|---|
-| `gateway/foundry-accounts/<account>/account.yaml` | `environment` | the one environment whose `models` job deploys this account (`dev`) |
+| `gateway/foundry-accounts/<account>/account.yaml` | `environment` | the one environment whose `model-platform-deployment` run deploys this account (`dev`) |
 | `projects/<project>/project.yaml` (project repository) | `environments` | the stages the project deploys to, in order (default `[dev]`) |
 | repository variable `PLATFORM_ENVIRONMENTS` | | the stages this repository deploys to, in order (`dev`) |
 
@@ -157,7 +157,7 @@ APIM names allow no dots, so `<model>` in these names is the model name with dot
    | `docs.md` | model card for the developer portal |
    | `tests.yaml` | smoke tests run through the gateway by an agent that uses the model |
 
-2. Open a pull request: `ci` checks format, validates and runs the plan tests; `release` shows the plan in dev.
+2. Open a pull request: `ci` checks format, validates and runs the plan tests; `model-platform-deployment` shows the plan in dev.
 3. Merge to main: dev applies and runs the smoke test. A release tag then promotes it to uat and prd, each after
    approval, once they are in `PLATFORM_ENVIRONMENTS` and have their own hosting accounts.
 
@@ -205,13 +205,13 @@ identity, and the team that owns the tool grants it access. See
 ## Gateway policy: the shared policy fragments
 
 The policy logic shared by every project model API, tool API, project agent API and agent operation is in APIM
-policy fragments, one per file in `gateway/policy-fragments/`. The `policies` job deploys them, stage by stage;
+policy fragments, one per file in `gateway/policy-fragments/`. `gateway-policy-deployment` deploys them, stage by stage;
 the agent and project pipelines only write thin policies that include them by name.
 
 | | |
 |---|---|
 | Change | `gateway/policy-fragments/<id>.xml` (file name = fragment ID) |
-| Workflow | `release.yml` → `_stage.yml`: job `policies` of `_stage.yml` |
+| Workflow | `gateway-policy-deployment.yml` (unit `_policies.yml`) |
 | Terraform stack | `gateway/terraform/gateway-policies` (fragments, the named values `gateway-tenant-id` and `ks-gateway-all` (global kill switch), the Content Safety backend `content-safety`, the Application Insights logger) |
 | State file | `ai-gateway-policies-<env>.tfstate` |
 | Stages | dev on merge; uat and prd on release tags, after approval, when `PLATFORM_ENVIRONMENTS` lists them |
@@ -241,11 +241,11 @@ evaluation gate: review it like platform code, and let it prove itself in dev be
 
 ## Workflows and triggers
 
-| Change | What runs (`release.yml`) |
+| Change | What runs |
 |---|---|
-| `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` | `models` (PR: plan in dev; merge: dev apply + smoke) |
-| `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` | `policies` (PR: plan in dev; merge: dev apply + gateway smoke test) |
-| release tag `v*`, manual run | both jobs; on a tag dev, then uat and prd after approval |
+| `gateway/foundry-accounts/**`, `gateway/terraform/platform-deployment/**` | `model-platform-deployment` (PR: plan in dev; merge: dev apply + smoke) |
+| `gateway/policy-fragments/**`, `gateway/terraform/gateway-policies/**` | `gateway-policy-deployment` (PR: plan in dev; merge: dev apply + gateway smoke test) |
+| release tag `v*`, manual run | both pipelines; on a tag dev, then uat and prd after approval |
 | anything (`ci.yml`) | format, validate and plan tests of both stacks |
 
 Projects, onboarding, tools and agents: the project repository's workflows.

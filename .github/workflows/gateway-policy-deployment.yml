@@ -1,0 +1,72 @@
+# Gateway policy deployment: the shared policy fragments in gateway/policy-fragments/ (one APIM policy fragment per
+# file) with the global kill switch ks-gateway-all, gateway-tenant-id, the Content Safety backend and the telemetry
+# logger; then the gateway smoke test. Every project's model, tool and agent API includes the fragments, so a change
+# reaches all of them at once, with no project redeployed. Unit: _policies.yml (one environment).
+#
+#   plan ─► dev ─► uat ─► prd
+#
+#   pull request      plan in dev (nothing changes)
+#   merge to main     dev
+#   release tag v*    dev, then uat and prd, each after approval (model-uat, model-prd)
+#   manual run        dev
+# A stage runs only if the repository variable PLATFORM_ENVIRONMENTS lists it (today: dev).
+name: gateway-policy-deployment
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["gateway/policy-fragments/**", "gateway/terraform/gateway-policies/**"]
+  pull_request:
+    paths: ["gateway/policy-fragments/**", "gateway/terraform/gateway-policies/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: gateway-policy-deployment-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.plan.outputs.environments }}
+      policies: ${{ steps.plan.outputs.policies }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          ENVIRONMENTS: ${{ vars.PLATFORM_ENVIRONMENTS }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ALL: ${{ github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          python3 scripts/release_plan.py "${ENVIRONMENTS:-dev}" $([ "$ALL" = "true" ] && echo --all) --base "$BASE" | tee -a "$GITHUB_OUTPUT"
+
+  dev:
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.outputs.policies == 'true' && contains(fromJson(needs.plan.outputs.environments), 'dev') }}
+    uses: ./.github/workflows/_policies.yml
+    with:
+      environment: dev
+      plan_only: ${{ github.event_name == 'pull_request' }}
+
+  # uat: release tags only, after dev succeeded; approval on model-uat.
+  uat:
+    needs: [plan, dev]
+    if: ${{ !cancelled() && needs.plan.outputs.policies == 'true' && contains(fromJson(needs.plan.outputs.environments), 'uat') && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.dev.result != 'failure' && needs.dev.result != 'cancelled' }}
+    uses: ./.github/workflows/_policies.yml
+    with:
+      environment: uat
+
+  # prd: release tags only, after uat succeeded; approval on model-prd.
+  prd:
+    needs: [plan, uat]
+    if: ${{ !cancelled() && needs.plan.outputs.policies == 'true' && contains(fromJson(needs.plan.outputs.environments), 'prd') && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.uat.result != 'failure' && needs.uat.result != 'cancelled' }}
+    uses: ./.github/workflows/_policies.yml
+    with:
+      environment: prd
