@@ -375,7 +375,7 @@ Content safety is resolved **per model** of each project, in this order:
 
 So two models in one project can have different settings, for example a stricter one for a model that is less
 safe on its own. Settings can only be **stricter** than the platform, at both levels: a category from `0` to `4`
-(lower blocks more), and `prompt_shields` can only be `true`. The project repository's `agent-ci` and onboarding plan
+(lower blocks more), and `prompt_shields` can only be `true`. The project repository's `ci` and onboarding plan
 reject anything else; the settings live in its `project.yaml`.
 
 ```yaml

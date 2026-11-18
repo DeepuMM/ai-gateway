@@ -73,7 +73,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  T([PR / merge / tag / manual]) --> D["detect: what changed (scripts/release_plan.py)<br/>stages from PLATFORM_ENVIRONMENTS"]
+  T([PR / merge / tag / manual]) --> D["plan: what changed (scripts/release_plan.py)<br/>stages from PLATFORM_ENVIRONMENTS"]
   D --> L["_models.yml per stage, in GitHub environment model-&lt;env&gt;<br/>(approval on uat and prd)"]
   L --> I["Sign in (OIDC) · terraform init<br/>state: ai-gateway-models-&lt;env&gt;.tfstate"]
   I --> P["Plan + validation<br/>accounts with environment: &lt;env&gt; · name = folder · format allowed · api/status valid"]
