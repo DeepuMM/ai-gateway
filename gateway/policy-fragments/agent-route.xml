@@ -15,6 +15,14 @@
 
        Reads the variables set by the project repository's templates/agent-operation-policy.xml (agent-kind,
        agent-name, agent-version) and by agent-caller (caller-oid). -->
+  <!-- Token metrics per project, agent and consumer (APIM subscription) for agent Responses calls, to the gateway's
+       Application Insights. The agent's model calls are counted again per project and model on the model hop. -->
+  <llm-emit-token-metric namespace="ai-gateway">
+    <dimension name="Project" value="@(context.Api.Path.Trim('/'))" />
+    <dimension name="Agent" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;, &quot;&quot;))" />
+    <dimension name="Subscription ID" />
+    <dimension name="Hop" value="agent" />
+  </llm-emit-token-metric>
   <set-variable name="agent-path" value="@{
     var prefix = &quot;/&quot; + context.Api.Path.Trim('/') + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;) + &quot;/&quot;;
     var path = context.Request.OriginalUrl.Path;

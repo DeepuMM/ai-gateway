@@ -354,6 +354,46 @@ check blocked nothing on agent traffic (found in test with a copy of a real Foun
 full request afterwards. Proved in test with Foundry's request shape: a Violence-3 prompt is blocked at a project
 threshold of 2 and answered at the default 4; a Violence-5 prompt is blocked at both; normal questions pass.
 
+### Token metrics
+
+Both hops emit token metrics (`llm-emit-token-metric`, namespace `ai-gateway`; prompt, completion and total tokens)
+to the environment's Application Insights (`gateway.app_insights`; the gateway diagnostic has custom metrics on and
+W3C correlation, and logs no headers or bodies):
+
+| Hop | Fragment | Dimensions |
+|---|---|---|
+| model call | `model-api-route` | `Project`, `Model`, `Hop`=`model` |
+| agent call (Responses) | `agent-route` | `Project`, `Agent`, `Subscription ID` (consumer), `Hop`=`agent` |
+
+```kusto
+customMetrics
+| where customDimensions["Hop"] == "model"
+| summarize tokens = sum(value) by name, project = tostring(customDimensions["Project"]), model = tostring(customDimensions["Model"]), bin(timestamp, 1h)
+```
+
+Model calls also return `x-ratelimit-remaining-tokens`, `x-ratelimit-remaining-quota-tokens` and `x-tokens-consumed`.
+
+### Compared with APIM's built-in AI gateway (portal import of a Foundry API)
+
+The portal's "Microsoft Foundry" import creates one API per Foundry resource with a managed-identity backend and,
+optionally, `llm-token-limit`, `llm-emit-token-metric`, semantic caching and `llm-content-safety`. This gateway uses
+the same policies, per project and per model, and adds what the import doesn't have:
+
+| | Portal import | This gateway |
+|---|---|---|
+| Model deployment in Foundry | must exist | created from `model.yaml` (or adopted) |
+| API | one, every model, any key holder | one per project, only its allowed models (`MODEL_NOT_ALLOWED`), only its Foundry identity |
+| Token limit / quota (`llm-token-limit`) | one per API | per project and model, shares checked against the model's capacity |
+| Token metrics (`llm-emit-token-metric`) | per API | per project/model and per project/agent/consumer |
+| Content safety (`llm-content-safety`) | one setting per API | platform default + stricter per project/model; checks the latest user message (see above) |
+| Kill switches, registry, catalog, agent APIs | – | global/model/agent switches, `model-meta-*`, catalog page, transparent agent APIs |
+| How | portal wizard, by hand | Git and pipelines, per environment |
+
+Not used yet, from the same APIM capability set: completion checks (`enforce-on-completions`; today only the model
+deployment's guardrail checks answers), Content Safety blocklists, backend pools with a circuit breaker (one backend
+per model; would also cover Content Safety outages), prompt/completion logging to Azure Monitor, semantic caching
+(needs Redis and an embeddings model).
+
 ### Known issue: Content Safety outages look like content blocks
 
 **`llm-content-safety` fails closed:** when the Azure AI Content Safety service can't answer, APIM rejects the prompt
