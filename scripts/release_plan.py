@@ -1,4 +1,4 @@
-"""What a platform release must do, for the release workflow (.github/workflows/_release.yml).
+"""What the platform pipelines must do (gateway-policy-deployment, model-platform-deployment): their stages and whether each has a change.
 
   release_plan.py <environments> [--all] [--base <sha>]
 

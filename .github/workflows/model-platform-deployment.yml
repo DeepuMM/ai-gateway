@@ -1,0 +1,71 @@
+# Model platform deployment: the models of the environment's hosting accounts (gateway/foundry-accounts/<account>/ with
+# environment: <env>): deployment, backend, kill switch ks-model-<model>, registry entry model-meta-<model>, the
+# model catalog; then the model smoke test and the Developer Portal. Unit: _models.yml (one environment).
+#
+#   plan ─► dev ─► uat ─► prd
+#
+#   pull request      plan in dev (nothing changes)
+#   merge to main     dev
+#   release tag v*    dev, then uat and prd, each after approval (model-uat, model-prd)
+#   manual run        dev
+# A stage runs only if the repository variable PLATFORM_ENVIRONMENTS lists it (today: dev).
+name: model-platform-deployment
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["gateway/foundry-accounts/**", "gateway/terraform/platform-deployment/**"]
+  pull_request:
+    paths: ["gateway/foundry-accounts/**", "gateway/terraform/platform-deployment/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: model-platform-deployment-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.plan.outputs.environments }}
+      models: ${{ steps.plan.outputs.models }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          ENVIRONMENTS: ${{ vars.PLATFORM_ENVIRONMENTS }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ALL: ${{ github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          python3 scripts/release_plan.py "${ENVIRONMENTS:-dev}" $([ "$ALL" = "true" ] && echo --all) --base "$BASE" | tee -a "$GITHUB_OUTPUT"
+
+  dev:
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.outputs.models == 'true' && contains(fromJson(needs.plan.outputs.environments), 'dev') }}
+    uses: ./.github/workflows/_models.yml
+    with:
+      environment: dev
+      plan_only: ${{ github.event_name == 'pull_request' }}
+
+  # uat: release tags only, after dev succeeded; approval on model-uat.
+  uat:
+    needs: [plan, dev]
+    if: ${{ !cancelled() && needs.plan.outputs.models == 'true' && contains(fromJson(needs.plan.outputs.environments), 'uat') && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.dev.result != 'failure' && needs.dev.result != 'cancelled' }}
+    uses: ./.github/workflows/_models.yml
+    with:
+      environment: uat
+
+  # prd: release tags only, after uat succeeded; approval on model-prd.
+  prd:
+    needs: [plan, uat]
+    if: ${{ !cancelled() && needs.plan.outputs.models == 'true' && contains(fromJson(needs.plan.outputs.environments), 'prd') && github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && needs.uat.result != 'failure' && needs.uat.result != 'cancelled' }}
+    uses: ./.github/workflows/_models.yml
+    with:
+      environment: prd

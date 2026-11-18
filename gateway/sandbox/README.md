@@ -14,7 +14,7 @@ terraform apply -var subscription_id=<sub> -var publisher_email=<you> \
   -var github_oidc_subject=<project repo subject> -var gateway_github_oidc_subject=<gateway repo subject>
 terraform output -raw environment_file      # the coordinates: set them with scripts/set_github_environment.sh sandbox
 # add gateway/foundry-accounts/<hosting_account>/, then run, in this order:
-#   here: release.yml (jobs policies, models)
+#   here: gateway-policy-deployment, model-platform-deployment
 #   project repository: use-case-onboarding, agent-deploy
 terraform destroy -var subscription_id=<sub> -var publisher_email=<you> ...   # removes everything
 ```
