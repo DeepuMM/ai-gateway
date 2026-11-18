@@ -66,8 +66,8 @@ run "deploys_shared_policy_fragments" {
     error_message = "model-content-safety should use the content-safety backend."
   }
   assert {
-    condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "enforce-on-completions=\"true\"")
-    error_message = "model-content-safety should check the model's answers too, not only prompts."
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "enforce-on-completions=\"@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cs-check-answers&quot;, false))\"")
+    error_message = "Answer checks are opt-in per project or model (cs-check-answers), off by default."
   }
   assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "cs-violence&quot;, 4)")
