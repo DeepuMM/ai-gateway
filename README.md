@@ -344,6 +344,14 @@ models:
 The settings reach every agent that uses the project's AI Gateway connection with that model. Today no project sets
 `content_safety`: both sandbox projects run on the platform defaults.
 
+### Answers are checked too
+
+`model-content-safety` also checks the model's **answers** (`enforce-on-completions="true"`), with the same
+categories and the same per-project thresholds as prompts. A flagged answer is replaced by `403`. Foundry streams its
+model calls; a streamed answer is checked in 1,000-character windows and forwarding **stops** at the first flagged
+window (APIM returns no `403` then: the agent gets a cut-off answer). The model deployment's guardrail
+(`model.yaml` `guardrail`) still applies as well.
+
 ### Content Safety checks the latest user message only
 
 `llm-content-safety` joins every message of a request into one text before it asks Azure AI Content Safety. Foundry
@@ -392,8 +400,8 @@ the same policies, per project and per model, and adds what the import doesn't h
 | Kill switches, registry, catalog, agent APIs | – | global/model/agent switches, `model-meta-*`, catalog page, transparent agent APIs |
 | How | portal wizard, by hand | Git and pipelines, per environment |
 
-Not used yet, from the same APIM capability set: completion checks (`enforce-on-completions`; today only the model
-deployment's guardrail checks answers), Content Safety blocklists, backend pools with a circuit breaker (one backend
+Answers are checked too (`enforce-on-completions`, see Content safety). Not used yet, from the same APIM capability
+set: Content Safety blocklists, backend pools with a circuit breaker (one backend
 per model; would also cover Content Safety outages), prompt/completion logging to Azure Monitor, semantic caching
 (needs Redis and an embeddings model).
 

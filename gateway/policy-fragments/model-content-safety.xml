@@ -14,6 +14,9 @@
        Content Safety rates even a severity-5 prompt 0, so nothing was ever blocked. The fragment therefore saves the
        request, cuts the body down to the last user message for the check, and restores the full request afterwards.
        Earlier turns were checked when they were sent.
+       ANSWERS are checked too (enforce-on-completions), with the same categories and thresholds: a flagged answer is
+       replaced by 403; a streamed answer (Foundry streams its model calls) is checked in 1,000-character windows and
+       forwarding stops at the first flagged window (no 403 then: the agent gets a cut-off answer).
        A blocked prompt gets 403 and never reaches the model, so it uses no tokens. Runs after the kill switches and the
        allowed-model check, so suspended or refused calls cost no Content Safety call. The model deployment's own
        guardrail (model.yaml guardrail) still applies too, including to the model's answers. -->
@@ -26,7 +29,7 @@
     check["messages"] = lastUser == null ? new JArray() : new JArray(lastUser.DeepClone());
     return check.ToString();
   }</set-body>
-  <llm-content-safety backend-id="content-safety" shield-prompt="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cs-prompt-shields&quot;, true))">
+  <llm-content-safety backend-id="content-safety" enforce-on-completions="true" shield-prompt="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;cs-prompt-shields&quot;, true))">
     <categories output-type="EightSeverityLevels">
       <category name="Hate" threshold="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;cs-hate&quot;, 4))" />
       <category name="Sexual" threshold="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;cs-sexual&quot;, 4))" />
