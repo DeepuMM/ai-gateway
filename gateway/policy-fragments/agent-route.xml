@@ -18,7 +18,7 @@
   <!-- Token metrics per project, agent and consumer (APIM subscription) for agent Responses calls, to the gateway's
        Application Insights. The agent's model calls are counted again per project and model on the model hop. -->
   <llm-emit-token-metric namespace="ai-gateway">
-    <dimension name="Project" value="@(context.Api.Path.Trim('/'))" />
+    <dimension name="Project" value="@(context.Api.Path.Trim('/').Split('/').Last())" />
     <dimension name="Agent" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;, &quot;&quot;))" />
     <dimension name="Subscription ID" />
     <dimension name="Hop" value="agent" />
