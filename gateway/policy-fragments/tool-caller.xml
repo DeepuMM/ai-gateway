@@ -1,0 +1,37 @@
+<fragment>
+  <!-- Shared by every tool API (tools/<project>/<tool>), inbound, first. Deployed by gateway-policy-deployment.
+       A tool belongs to a project. Foundry calls it through the project's RemoteTool connection with the calling
+       project's managed identity: an Entra token for https://cognitiveservices.azure.com from this environment's tenant
+       (named value gateway-tenant-id) whose xms_mirid claim is the calling project's resource ID. Only the owning
+       project and the projects it shares the tool with (tool.yaml shared_with) are accepted.
+       Reads the context variable set by the tool's policy (agent-deployment onboarding/terraform/policies/tool-api.xml.tftpl):
+         tool-callers  resource IDs of the projects that may call, separated by "|"
+       Sets: caller-mirid (the calling project's resource ID, lowercase), used by tool-route for its rate counter. -->
+  <validate-azure-ad-token tenant-id="{{gateway-tenant-id}}" header-name="Authorization"
+      failed-validation-httpcode="401" failed-validation-error-message="Only the identity of a project this tool is shared with may call it."
+      output-token-variable-name="caller-token">
+    <audiences>
+      <audience>https://cognitiveservices.azure.com</audience>
+    </audiences>
+  </validate-azure-ad-token>
+  <set-variable name="caller-mirid" value="@(((Jwt)context.Variables[&quot;caller-token&quot;]).Claims.GetValueOrDefault(&quot;xms_mirid&quot;, &quot;&quot;).ToLowerInvariant())" />
+  <choose>
+    <when condition="@{
+      var caller = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;caller-mirid&quot;, &quot;&quot;);
+      var allowed = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool-callers&quot;, &quot;&quot;).ToLowerInvariant().Split('|');
+      return caller.Length == 0 || !allowed.Contains(caller);
+    }">
+      <return-response>
+        <set-status code="401" reason="Unauthorized" />
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+        <set-body>{"error":{"code":"CALLER_NOT_ALLOWED","message":"Only the identity of a project this tool is shared with may call it."}}</set-body>
+      </return-response>
+    </when>
+  </choose>
+  <set-header name="x-correlation-id" exists-action="skip">
+    <value>@(context.RequestId.ToString())</value>
+  </set-header>
+  <!-- The project's token is for the gateway only: it never reaches the tool. Backend authentication, when the tool
+       needs it, is APIM's own managed identity (the tool's policy), granted by the team that owns the tool. -->
+  <set-header name="Authorization" exists-action="delete" />
+</fragment>
