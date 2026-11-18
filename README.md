@@ -33,6 +33,17 @@ prd for uat. uat and prd run only on release tags, after approval, and only when
 | manual run | dev | dev |
 | any pull request or merge (`ci.yml`) | Terraform format, validate and plan tests of both stacks; scripts parse | |
 
+One push to `main` starts **at most one run of each pipeline**. Each pipeline deploys one thing per environment (the
+shared policy, or the environment's models), so a stage is a single box, not a matrix.
+
+| The merge changes | gateway-policy-deployment | model-platform-deployment |
+|---|---|---|
+| `gateway/policy-fragments/agent-route.xml` | 1 run: dev | — |
+| `gateway/foundry-accounts/<account>/models/<model>/model.yaml` | — | 1 run: dev (every model of the environment's accounts is planned; only the changed one changes) |
+| both of the above | 1 run: dev | 1 run: dev (independent of the policy run) |
+| `README.md`, `gateway/scripts/**` | — (only `ci`) | — (only `ci`) |
+| release tag `v1.2.0` | 1 run: dev, uat, prd | 1 run: dev, uat, prd |
+
 ### What each pipeline deploys
 
 | Pipeline | What it does | Terraform state |
