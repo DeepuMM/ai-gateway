@@ -365,10 +365,13 @@ W3C correlation, and logs no headers or bodies):
 | model call | `model-api-route` | `Project`, `Model`, `Hop`=`model` |
 | agent call (Responses) | `agent-route` | `Project`, `Agent`, `Subscription ID` (consumer), `Hop`=`agent` |
 
+Metric names: `Prompt Tokens`, `Completion Tokens`, `Total Tokens`, plus Foundry's cached, reasoning and audio
+token counts. Verified in test on 2026-11-18 for both agent kinds (prompt and hosted).
+
 ```kusto
 customMetrics
 | where customDimensions["Hop"] == "model"
-| summarize tokens = sum(value) by name, project = tostring(customDimensions["Project"]), model = tostring(customDimensions["Model"]), bin(timestamp, 1h)
+| summarize tokens = sum(value) by name, proj = tostring(customDimensions["Project"]), model = tostring(customDimensions["Model"]), bin(timestamp, 1h)
 ```
 
 Model calls also return `x-ratelimit-remaining-tokens`, `x-ratelimit-remaining-quota-tokens` and `x-tokens-consumed`.
