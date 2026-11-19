@@ -22,8 +22,8 @@
     <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id"))</value>
   </set-header>
   <!-- The Foundry path is set per call by agent-route (the caller's own Foundry path; transparent gateway). -->
-  <!-- Who Foundry sees: APIM's managed identity (access role), or the caller's own Foundry token when agent-caller
-       forwards it (access foundry or both: Foundry checks the caller's role). A subscription key is never passed on. -->
+  <!-- Who Foundry sees: APIM's managed identity (access [gateway]), or the caller's own Foundry token when
+       agent-caller forwards it (access lists foundry: Foundry checks the caller's role). A subscription key is never passed on. -->
   <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
   <choose>
     <when condition="@(!string.IsNullOrEmpty(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-token&quot;, &quot;&quot;)))">
