@@ -637,10 +637,12 @@ The change reaches the gateway within seconds. Anyone who can edit the APIM inst
 - **Agent app (Entra), once per environment, before the gateway policy:** a tenant admin runs
   `python3 scripts/setup_agents_app.py <env> <pipeline identity client ID>` and sets the printed client ID as
   GitHub variable `AGENTS_APP_ID` (here in `model-<env>`, in the project repository in `agent-<env>`). It creates the
-  app registration `AI Gateway Agents (<env>)` (URI `api://ai-gateway-agents-<env>`, v2 tokens, scope
+  app registration `AI Gateway Agents (<env>)` (URI `api://ai-gateway-agents-<env>`, or `api://<client ID>` where
+  tenant policy requires it; callers can always use the scope `<client ID>/.default`; v2 tokens, scope
   `access_as_user` with Azure CLI pre-authorized, **assignment required**), the role `agents.all`, and gives the
   pipeline identity that role, ownership of the app and Microsoft Graph `Application.ReadWrite.OwnedBy` (so the agent
-  pipeline creates and removes agent roles on this app, and on nothing else). Who holds which agent role is decided
+  pipeline creates and removes agent roles on this app, and on nothing else). Granting that Graph permission needs a
+  Privileged Role Administrator or Global Administrator; without one, the script prints the command for them. Who holds which agent role is decided
   outside the pipelines: see the project repository's README, *Access to agents*.
 - **Shared policy fragments:** release the gateway policy to the environment (`gateway-policy-deployment`, stage of that environment) before the first project release there.
 

@@ -114,10 +114,18 @@ def main(env_name, pipeline_client_id):
     graph_sp = graph("GET", f"servicePrincipals?$filter=appId eq '{GRAPH_APP_ID}'&$select=id,appRoles")["value"][0]
     owned_by = next(r["id"] for r in graph_sp["appRoles"] if r["value"] == "Application.ReadWrite.OwnedBy")
     have = graph("GET", f"servicePrincipals/{pipe_oid}/appRoleAssignments")["value"]
-    if not any(a["appRoleId"] == owned_by and a["resourceId"] == graph_sp["id"] for a in have):
-        graph("POST", f"servicePrincipals/{pipe_oid}/appRoleAssignments",
-              {"principalId": pipe_oid, "resourceId": graph_sp["id"], "appRoleId": owned_by})
-    print("  pipeline identity: Microsoft Graph Application.ReadWrite.OwnedBy")
+    granted = any(a["appRoleId"] == owned_by and a["resourceId"] == graph_sp["id"] for a in have)
+    if not granted:
+        granted = graph("POST", f"servicePrincipals/{pipe_oid}/appRoleAssignments",
+                        {"principalId": pipe_oid, "resourceId": graph_sp["id"], "appRoleId": owned_by},
+                        ok_fail=True) is not None
+    if granted:
+        print("  pipeline identity: Microsoft Graph Application.ReadWrite.OwnedBy")
+    else:   # granting Graph application permissions needs Privileged Role Administrator or Global Administrator
+        body = json.dumps({"principalId": pipe_oid, "resourceId": graph_sp["id"], "appRoleId": owned_by})
+        print("  pipeline identity: Microsoft Graph Application.ReadWrite.OwnedBy NOT granted: your account can't grant\n"
+              "  Microsoft Graph application permissions. A Privileged Role Administrator or Global Administrator runs:\n"
+              f"    az rest --method POST --url {GRAPH}/servicePrincipals/{pipe_oid}/appRoleAssignments --body '{body}'")
     if not any(a["appRoleId"] == all_role["id"] and a["resourceId"] == sp_oid for a in have):
         graph("POST", f"servicePrincipals/{sp_oid}/appRoleAssignedTo",
               {"principalId": pipe_oid, "resourceId": sp_oid, "appRoleId": all_role["id"]})
