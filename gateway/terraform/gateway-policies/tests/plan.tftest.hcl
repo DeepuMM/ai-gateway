@@ -93,9 +93,9 @@ run "deploys_shared_policy_fragments" {
   }
 
   assert {
-    condition = alltrue([for x in ["<validate-jwt", "<audience>{{agents-app-id}}</audience>", "<audience>https://ai.azure.com</audience>", "access-gateway", "access-foundry", "agents.all", "AGENT_NOT_ALLOWED", "x-foundry-authorization", "CALLER_MISMATCH", "foundry-token", "<set-header name=\"x-ms-user-identity\" exists-action=\"delete\" />"] :
+    condition = alltrue([for x in ["<validate-jwt", "<audience>{{agents-app-id}}</audience>", "<audience>https://ai.azure.com</audience>", "access-gateway", "access-foundry", "use-foundry", "AsJwt()", "agents.all", "AGENT_NOT_ALLOWED", "foundry-token", "<set-header name=\"x-ms-user-identity\" exists-action=\"delete\" />"] :
     strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, x)])
-    error_message = "agent-caller should require every check in the agent's access list: agent app token with the role (gateway), the caller's Foundry token (foundry), both of the same caller; and drop caller-supplied identity headers."
+    error_message = "agent-caller should accept the tokens the agent's access list allows (one, in Authorization): agent app token with the role (gateway) or the caller's Foundry token (foundry); and drop caller-supplied identity headers."
   }
   assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["project-inbound"].value, "foundry-token") && strcontains(azurerm_api_management_policy_fragment.shared["project-inbound"].value, "<authentication-managed-identity resource=\"https://ai.azure.com\" />")

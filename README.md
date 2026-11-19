@@ -237,15 +237,15 @@ Agent call   <method> /ai/<project>/<agent>/<the agent's Foundry path>   (caller
                   POST .../demo-assistant/openai/v1/responses                                 (prompt)
 └─ operation policy  <agent>-<method>                       project repository: templates/agent-operation-policy.xml
    ├─ set variables: agent, agent-project, agent-access, kind, ks-agent-<agent>, agent-name, agent-version, rate limit
-   ├─ fragment agent-caller         every check in the agent's access list: gateway (agent app token + role),
-   │                                foundry (caller's Foundry token, forwarded); object ID kept
+   ├─ fragment agent-caller         the token the caller sent, if the agent's access list accepts it: gateway
+   │                                (agent app token + role) or foundry (caller's Foundry token, forwarded)
    ├─ fragment agent-guardrails     global kill switch → agent kill switch → agent rate limit
    ├─ quota-by-key                  agent daily quota
    ├─ <base /> ─► API policy  project-<project>             project repository: templates/project-policy.xml
    │              ├─ set variable: project rate limit
    │              ├─ quota-by-key   project daily quota
    │              └─ fragment project-inbound   project rate limit, correlation ID, APIM managed identity
-   │                                            (or the caller's Foundry token: access lists foundry)
+   │                                            (or the caller's Foundry token, when the caller sent one)
    ├─ fragment agent-route          the agent's own Foundry endpoints only (else 404), body/query/headers unchanged;
    │                                prompt: agent_reference = evaluated version; hosted: x-ms-user-identity = caller,
    │                                new sessions bound to the evaluated version (endpoint pinned in Foundry)
@@ -311,9 +311,9 @@ Each agent operation and project API policy only sets its own values as context 
 | Fragment | Included by | Does |
 |---|---|---|
 | `agent-guardrails` | agent operation policy, before `<base />` | global kill switch `ks-gateway-all` and agent kill switch (503), agent rate limit per caller |
-| `agent-caller` | agent operation policy, before `<base />` | who may call: every check in the agent's **access list** (`agent.yaml` `access`, default `[gateway]`). **gateway**: token for the **agent app** (audience = named value `agents-app-id`) with the role `agent.<project>.<agent>`, `agent.<project>.all` or `agents.all`, else `403 AGENT_NOT_ALLOWED`; alone, the token stops at the gateway. **foundry**: the caller's Foundry token (`https://ai.azure.com`), forwarded; Foundry checks the caller's Foundry role. **`[gateway, foundry]`**: the agent app token with the role in `Authorization` **and** the same caller's Foundry token in `x-foundry-authorization` (else 401 / `CALLER_MISMATCH`), forwarded. Always this tenant; keeps the caller's object ID (limits, sessions); removes caller-sent `x-ms-user-identity` / `x-ms-user-isolation-key` |
+| `agent-caller` | agent operation policy, before `<base />` | who may call: the tokens the agent's **access list** accepts (`agent.yaml` `access`, default `[gateway]`); the caller sends **one** token in `Authorization`, and with both listed either kind works (picked by the token's audience). **gateway**: token for the **agent app** (audience = named value `agents-app-id`) with the role `agent.<project>.<agent>`, `agent.<project>.all` or `agents.all`, else `403 AGENT_NOT_ALLOWED`; the token stops at the gateway. **foundry**: the caller's Foundry token (`https://ai.azure.com`), forwarded; Foundry checks the caller's Foundry role. Always this tenant; keeps the caller's object ID (limits, sessions); removes caller-sent `x-ms-user-identity` / `x-ms-user-isolation-key` |
 | `agent-route` | agent operation policy, after `<base />` | **transparent route**: the caller's Foundry path after `/<project path>/<agent>/` goes to the agent's Foundry endpoint with body, query string and headers unchanged. Hosted: `endpoint/...` only, `x-ms-user-identity` = caller (per-caller sessions), new sessions bound to the evaluated version. Prompt: `openai/v1/responses` and `openai/v1/conversations` only, `agent_reference` = evaluated version. Anything else: `404 AGENT_PATH_NOT_ALLOWED` |
-| `project-inbound` | project API policy | project rate limit per caller, Foundry sign-in (APIM's managed identity, or the caller's forwarded Foundry token for agents whose access lists `foundry`), correlation ID (caller's `x-correlation-id`, else its `traceparent` trace ID, else the request ID), managed identity |
+| `project-inbound` | project API policy | project rate limit per caller, Foundry sign-in (APIM's managed identity, or the caller's forwarded Foundry token when the caller sent a Foundry token), correlation ID (caller's `x-correlation-id`, else its `traceparent` trace ID, else the request ID), managed identity |
 | `project-outbound` | project API policy, project model API policy | correlation ID on the response |
 | `model-api-caller` | project model API policy (project repository's use-case onboarding) | only the project's Foundry identity (token claim `xms_mirid`; tenant from named value `gateway-tenant-id`) |
 | `model-api-route` | project model API policy, after its routing table | global kill switch `ks-gateway-all` (503), 404 `MODEL_NOT_ALLOWED`, model kill switch, token limit, backend, managed identity |
