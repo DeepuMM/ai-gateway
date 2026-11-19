@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""One-time Entra setup of the AI gateway's agent app for ONE environment. Run by a tenant admin, not by a pipeline.
+"""One-time Entra setup of the AI gateway's agent app for ONE environment. Run by a person, not by a pipeline.
 
 Callers of agents through the gateway present a token for this app (scope `<client ID>/.default` or
 `api://ai-gateway-agents-<env>/.default`); the agent-caller policy fragment lets a call through only if the token's
-`roles` claim holds the agent's role. The agent pipeline (agent-deployment) creates those roles on this app; who gets
-which role is decided outside the pipelines, by the agents' owners and the tenant admins (README: Access to agents).
+`roles` claim holds the agent's role. Everything in Entra stays outside the pipelines: an owner of this app (whoever runs
+this script becomes one) creates the agent roles (agent-deployment: `python3 scripts/agent_pipeline.py roles`), and
+the agents' owners decide who holds them (README: Access to agents).
 
   python3 scripts/setup_agents_app.py <environment> <pipeline identity client ID>
 
@@ -13,12 +14,10 @@ Creates or completes, idempotently:
     when the tenant refuses that URI), v2 tokens, delegated scope access_as_user, Azure CLI pre-authorized
   - its enterprise app with "assignment required": only identities holding one of its roles get a token at all
   - role agents.all (call every agent), assigned to the pipeline identity: its smoke tests call every agent
-  - the pipeline identity as owner of the app, and Microsoft Graph Application.ReadWrite.OwnedBy for it: it can
-    create and remove agent roles on the apps it owns, and on nothing else in the tenant
-Prints the client ID: set it as GitHub variable AGENTS_APP_ID (both repositories' environments).
+The pipeline gets no Microsoft Graph permission. Prints the client ID: set it as GitHub variable AGENTS_APP_ID (both
+repositories' environments).
 
-Needs `az login` as a user who may create app registrations and grant Microsoft Graph application permissions
-(Privileged Role Administrator or Global Administrator).
+Needs `az login` as a user who may create app registrations (the default for members in most tenants).
 """
 import json
 import subprocess
@@ -26,7 +25,6 @@ import sys
 import uuid
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 AZURE_CLI_APP_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 
 
@@ -101,35 +99,16 @@ def main(env_name, pipeline_client_id):
     graph("PATCH", f"servicePrincipals/{sp_oid}", {"appRoleAssignmentRequired": True})
     print("  enterprise app: assignment required")
 
-    # The pipeline identity: owner of the app, Graph Application.ReadWrite.OwnedBy, role agents.all.
+    # The pipeline identity: role agents.all (smoke tests). Nothing else in Entra.
     pipe = graph("GET", f"servicePrincipals?$filter=appId eq '{pipeline_client_id}'&$select=id,displayName")["value"]
     if not pipe:
         sys.exit(f"No service principal with client ID {pipeline_client_id} (the pipeline identity, GitHub variable AZURE_CLIENT_ID)")
     pipe_oid = pipe[0]["id"]
-    owners = [o["id"] for o in graph("GET", f"applications/{app_oid}/owners?$select=id")["value"]]
-    if pipe_oid not in owners:
-        graph("POST", f"applications/{app_oid}/owners/$ref", {"@odata.id": f"{GRAPH}/directoryObjects/{pipe_oid}"})
-    print(f"  owner: {pipe[0]['displayName']}")
-
-    graph_sp = graph("GET", f"servicePrincipals?$filter=appId eq '{GRAPH_APP_ID}'&$select=id,appRoles")["value"][0]
-    owned_by = next(r["id"] for r in graph_sp["appRoles"] if r["value"] == "Application.ReadWrite.OwnedBy")
     have = graph("GET", f"servicePrincipals/{pipe_oid}/appRoleAssignments")["value"]
-    granted = any(a["appRoleId"] == owned_by and a["resourceId"] == graph_sp["id"] for a in have)
-    if not granted:
-        granted = graph("POST", f"servicePrincipals/{pipe_oid}/appRoleAssignments",
-                        {"principalId": pipe_oid, "resourceId": graph_sp["id"], "appRoleId": owned_by},
-                        ok_fail=True) is not None
-    if granted:
-        print("  pipeline identity: Microsoft Graph Application.ReadWrite.OwnedBy")
-    else:   # granting Graph application permissions needs Privileged Role Administrator or Global Administrator
-        body = json.dumps({"principalId": pipe_oid, "resourceId": graph_sp["id"], "appRoleId": owned_by})
-        print("  pipeline identity: Microsoft Graph Application.ReadWrite.OwnedBy NOT granted: your account can't grant\n"
-              "  Microsoft Graph application permissions. A Privileged Role Administrator or Global Administrator runs:\n"
-              f"    az rest --method POST --url {GRAPH}/servicePrincipals/{pipe_oid}/appRoleAssignments --body '{body}'")
     if not any(a["appRoleId"] == all_role["id"] and a["resourceId"] == sp_oid for a in have):
         graph("POST", f"servicePrincipals/{sp_oid}/appRoleAssignedTo",
               {"principalId": pipe_oid, "resourceId": sp_oid, "appRoleId": all_role["id"]})
-    print("  pipeline identity: role agents.all")
+    print(f"  {pipe[0]['displayName']}: role agents.all")
 
     print(f"\nAGENTS_APP_ID={app_id}\ncallers' scope: {uri}/.default (or {app_id}/.default)")
 

@@ -113,7 +113,7 @@ folders under `gateway/foundry-accounts/` (`account.yaml`). The project reposito
 | | **Reader** | the Content Safety account | lookup for the backend |
 | | **Storage Blob Data Contributor** | the Terraform state container | state |
 | | Federated credential | the identity, trusting `repo:<owner>@<id>/ai-gateway@<id>:environment:model-<env>` | GitHub OIDC sign-in |
-| | **Owner** of the agent app + Microsoft Graph **Application.ReadWrite.OwnedBy** + role `agents.all` | the agent app (Entra) | the agent pipeline creates agent roles; smoke tests call every agent (`scripts/setup_agents_app.py`) |
+| | Role `agents.all` | the agent app (Entra) | the agent pipeline's smoke tests call every agent (`scripts/setup_agents_app.py`); no Entra rights |
 | APIM managed identity (runtime) | **Foundry User** | each hosting account and the agent account | call the models and the agents |
 | | **Cognitive Services User** | the Content Safety account | prompt checks |
 | Platform engineer (platform stack) | Owner, or Contributor + Role Based Access Control Administrator | the platform resource group | create resources and role assignments |
@@ -640,9 +640,8 @@ The change reaches the gateway within seconds. Anyone who can edit the APIM inst
   app registration `AI Gateway Agents (<env>)` (URI `api://ai-gateway-agents-<env>`, or `api://<client ID>` where
   tenant policy requires it; callers can always use the scope `<client ID>/.default`; v2 tokens, scope
   `access_as_user` with Azure CLI pre-authorized, **assignment required**), the role `agents.all`, and gives the
-  pipeline identity that role, ownership of the app and Microsoft Graph `Application.ReadWrite.OwnedBy` (so the agent
-  pipeline creates and removes agent roles on this app, and on nothing else). Granting that Graph permission needs a
-  Privileged Role Administrator or Global Administrator; without one, the script prints the command for them. Who holds which agent role is decided
+  pipeline identity that role (smoke tests). The pipelines get **no Entra rights**: whoever runs the script owns the
+  app and creates the agent roles (project repository: `python3 scripts/agent_pipeline.py roles`). Who holds which agent role is decided
   outside the pipelines: see the project repository's README, *Access to agents*.
 - **Shared policy fragments:** release the gateway policy to the environment (`gateway-policy-deployment`, stage of that environment) before the first project release there.
 
