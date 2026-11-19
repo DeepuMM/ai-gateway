@@ -26,6 +26,7 @@ jobs:
     env:
       STACK: gateway/terraform/gateway-policies
       TF_VAR_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      TF_VAR_agents_app_id: ${{ vars.AGENTS_APP_ID }}   # the agent app (scripts/setup_agents_app.py)
       TF_VAR_content_safety_account: ${{ vars.CONTENT_SAFETY_ACCOUNT }}
       TF_VAR_content_safety_resource_group: ${{ vars.CONTENT_SAFETY_RESOURCE_GROUP }}
       TF_VAR_app_insights_name: ${{ vars.APP_INSIGHTS_NAME }}

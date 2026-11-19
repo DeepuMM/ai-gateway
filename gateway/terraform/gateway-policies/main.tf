@@ -12,6 +12,18 @@ resource "azurerm_api_management_named_value" "tenant_id" {
   tags                = ["policy-fragments"]
 }
 
+# The gateway's agent app (Entra), for the token and role check in the agent-caller fragment: its client ID is the
+# audience of callers' tokens. Created once per environment by scripts/setup_agents_app.py (a tenant admin).
+resource "azurerm_api_management_named_value" "agents_app_id" {
+  name                = "agents-app-id"
+  display_name        = "agents-app-id"
+  api_management_name = data.azurerm_api_management.this.name
+  resource_group_name = data.azurerm_api_management.this.resource_group_name
+  value               = var.agents_app_id
+  secret              = false
+  tags                = ["policy-fragments"]
+}
+
 # Global kill switch, checked by agent-guardrails and model-api-route: anything other than "active" stops every
 # agent and model API on this gateway. Created "active"; after that the value belongs to operations (APIM > Named
 # values), so an apply never re-activates a suspended gateway.
@@ -72,5 +84,5 @@ resource "azurerm_api_management_policy_fragment" "shared" {
 
   # Fragments reference named values ({{...}}): APIM refuses to save one whose named value doesn't exist yet.
   # Fragments also reference backends (llm-content-safety backend-id): APIM refuses a fragment whose backend is missing.
-  depends_on = [azurerm_api_management_named_value.tenant_id, azurerm_api_management_named_value.kill_switch_all, azapi_resource.content_safety_backend]
+  depends_on = [azurerm_api_management_named_value.tenant_id, azurerm_api_management_named_value.agents_app_id, azurerm_api_management_named_value.kill_switch_all, azapi_resource.content_safety_backend]
 }

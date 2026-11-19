@@ -15,12 +15,12 @@
 
        Reads the variables set by the project repository's templates/agent-operation-policy.xml (agent-kind,
        agent-name, agent-version) and by agent-caller (caller-oid). -->
-  <!-- Token metrics per project, agent and consumer (APIM subscription) for agent Responses calls, to the gateway's
+  <!-- Token metrics per project, agent and caller (object ID) for agent Responses calls, to the gateway's
        Application Insights. The agent's model calls are counted again per project and model on the model hop. -->
   <llm-emit-token-metric namespace="ai-gateway">
     <dimension name="Project" value="@(context.Api.Path.Trim('/').Split('/').Last())" />
     <dimension name="Agent" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;, &quot;&quot;))" />
-    <dimension name="Subscription ID" />
+    <dimension name="Caller" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;caller-oid&quot;, &quot;&quot;))" />
     <dimension name="Hop" value="agent" />
   </llm-emit-token-metric>
   <set-variable name="agent-path" value="@{
@@ -38,10 +38,16 @@
     <!-- hosted agent: its own endpoint surface only -->
     <when condition="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-kind&quot;) == &quot;hosted&quot; &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;).StartsWith(&quot;endpoint/&quot;))">
       <rewrite-uri template="@(&quot;/agents/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-query&quot;))" copy-unmatched-params="false" />
-      <!-- per-caller isolation of sessions and conversations (needs UserIdentityImpersonation for APIM's identity) -->
-      <set-header name="x-ms-user-identity" exists-action="override">
-        <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("caller-oid"))</value>
-      </set-header>
+      <!-- per-caller isolation of sessions and conversations when Foundry sees APIM (access role; needs
+           UserIdentityImpersonation for APIM's identity). With the caller's own token (foundry, both) Foundry
+           already knows the caller. -->
+      <choose>
+        <when condition="@(string.IsNullOrEmpty(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-token&quot;, &quot;&quot;)))">
+          <set-header name="x-ms-user-identity" exists-action="override">
+            <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("caller-oid"))</value>
+          </set-header>
+        </when>
+      </choose>
       <choose>
         <!-- a new session is bound to the evaluated version, whatever the caller asked for -->
         <when condition="@(context.Request.Method == &quot;POST&quot; &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) == &quot;endpoint/sessions&quot;)">

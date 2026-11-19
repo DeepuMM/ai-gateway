@@ -1,23 +1,114 @@
 <fragment>
   <!-- Shared by every agent operation, BEFORE <base />. Deployed by gateway-policy-deployment (one copy per APIM).
-       Callers present the same Entra token they would send to Foundry directly (audience https://ai.azure.com, this
-       tenant). The gateway validates it and keeps the caller's object ID in the variable caller-oid; agent-route sends
-       it to hosted agents as x-ms-user-identity, so Foundry isolates sessions and conversations per caller even though
-       it sees APIM's managed identity (project-inbound replaces the Authorization header). Callers can't set their
-       own identity or isolation key: those headers are removed here. -->
-  <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer"
-      failed-validation-error-message="A Microsoft Entra token for https://ai.azure.com from this tenant is required (Authorization: Bearer)."
-      output-token-variable-name="caller-jwt">
-    <openid-config url="https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0/.well-known/openid-configuration" />
-    <audiences>
-      <audience>https://ai.azure.com</audience>
-    </audiences>
-    <issuers>
-      <issuer>https://sts.windows.net/{{gateway-tenant-id}}/</issuer>
-      <issuer>https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0</issuer>
-    </issuers>
-  </validate-jwt>
+       Who may call an agent depends on the agent's access mode (variable agent-access, from agent.yaml `access`):
+
+         role     (default)  Authorization: a token for the gateway's agent app (named value agents-app-id; scope
+                             <client ID>/.default) whose roles claim holds agents.all, agent.<project>.all or
+                             agent.<project>.<agent>, else 403 AGENT_NOT_ALLOWED. Foundry sees APIM's managed identity;
+                             hosted agents get the caller's object ID as x-ms-user-identity (per-caller sessions).
+         foundry             Authorization: the caller's Foundry token (https://ai.azure.com), forwarded to Foundry,
+                             which checks the caller's own Foundry role on the project (e.g. Foundry Agent Consumer).
+         both                Authorization: agent app token with the role (as for role) AND x-foundry-authorization:
+                             the same caller's Foundry token (same object ID), forwarded to Foundry, which checks the
+                             caller's Foundry role. Foundry runs the agent as the caller (user-delegated tools).
+
+       Tokens are from this tenant only. No subscription key: limits count per caller (caller-oid). Unknown or missing
+       modes are treated as role; a missing project or agent name fails closed (403). The forwarded Foundry token goes
+       in variable foundry-token (project-inbound sends it instead of APIM's identity; agent-route then sends no
+       x-ms-user-identity). Callers can't set their own identity or isolation key: those headers are removed here.
+       Reads agent-access, agent-project and agent, set by the project repository's templates/agent-operation-policy.xml. -->
+  <set-variable name="agent-access" value="@{
+    var m = (context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-access&quot;, &quot;role&quot;) ?? &quot;&quot;).ToLowerInvariant();
+    return m == &quot;foundry&quot; || m == &quot;both&quot; ? m : &quot;role&quot;;
+  }" />
+  <choose>
+    <when condition="@((string)context.Variables[&quot;agent-access&quot;] == &quot;foundry&quot;)">
+      <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer"
+          failed-validation-error-message="This agent is called with your Microsoft Entra token for Foundry (https://ai.azure.com) from this tenant (Authorization: Bearer); Foundry checks your role on the project."
+          output-token-variable-name="caller-jwt">
+        <openid-config url="https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0/.well-known/openid-configuration" />
+        <audiences>
+          <audience>https://ai.azure.com</audience>
+        </audiences>
+        <issuers>
+          <issuer>https://sts.windows.net/{{gateway-tenant-id}}/</issuer>
+          <issuer>https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0</issuer>
+        </issuers>
+      </validate-jwt>
+      <set-variable name="foundry-token" value="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;))" />
+    </when>
+    <otherwise>
+      <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer"
+          failed-validation-error-message="A Microsoft Entra token for the AI gateway's agent app from this tenant is required (Authorization: Bearer; scope {{agents-app-id}}/.default)."
+          output-token-variable-name="caller-jwt">
+        <openid-config url="https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0/.well-known/openid-configuration" />
+        <audiences>
+          <audience>{{agents-app-id}}</audience>
+        </audiences>
+        <issuers>
+          <issuer>https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0</issuer>
+        </issuers>
+      </validate-jwt>
+    </otherwise>
+  </choose>
   <set-variable name="caller-oid" value="@(((Jwt)context.Variables[&quot;caller-jwt&quot;]).Claims.GetValueOrDefault(&quot;oid&quot;, &quot;&quot;))" />
+  <!-- role and both: the agent's role, its project's role or agents.all. -->
+  <choose>
+    <when condition="@{
+      if ((string)context.Variables[&quot;agent-access&quot;] == &quot;foundry&quot;) { return false; }
+      var jwt = (Jwt)context.Variables[&quot;caller-jwt&quot;];
+      var roles = jwt.Claims.ContainsKey(&quot;roles&quot;) ? jwt.Claims[&quot;roles&quot;] : new string[0];
+      var project = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-project&quot;, &quot;&quot;);
+      var agent = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent&quot;, &quot;&quot;);
+      var allowed = new[] { &quot;agents.all&quot;, &quot;agent.&quot; + project + &quot;.all&quot;, &quot;agent.&quot; + project + &quot;.&quot; + agent };
+      return project == &quot;&quot; || agent == &quot;&quot; || !roles.Any(r => allowed.Contains(r, StringComparer.OrdinalIgnoreCase));
+    }">
+      <return-response>
+        <set-status code="403" reason="Forbidden" />
+        <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+        <set-body>@{
+          var project = context.Variables.GetValueOrDefault&lt;string&gt;("agent-project", "");
+          var agent = context.Variables.GetValueOrDefault&lt;string&gt;("agent", "");
+          return new JObject(
+            new JProperty("error", new JObject(
+              new JProperty("code", "AGENT_NOT_ALLOWED"),
+              new JProperty("message", "Your identity holds no role for this agent. Ask its owner for role agent." + project + "." + agent + " (or agent." + project + ".all) on the AI gateway's agent app."),
+              new JProperty("correlationId", context.RequestId.ToString())))).ToString();
+        }</set-body>
+      </return-response>
+    </when>
+  </choose>
+  <!-- both: the same caller's Foundry token, forwarded so that Foundry checks the caller's Foundry role. -->
+  <choose>
+    <when condition="@((string)context.Variables[&quot;agent-access&quot;] == &quot;both&quot;)">
+      <validate-jwt header-name="x-foundry-authorization" failed-validation-httpcode="401" require-scheme="Bearer"
+          failed-validation-error-message="This agent also needs your Microsoft Entra token for Foundry (https://ai.azure.com) in header x-foundry-authorization: Bearer; Foundry checks your role on the project."
+          output-token-variable-name="foundry-jwt">
+        <openid-config url="https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0/.well-known/openid-configuration" />
+        <audiences>
+          <audience>https://ai.azure.com</audience>
+        </audiences>
+        <issuers>
+          <issuer>https://sts.windows.net/{{gateway-tenant-id}}/</issuer>
+          <issuer>https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0</issuer>
+        </issuers>
+      </validate-jwt>
+      <choose>
+        <when condition="@(((Jwt)context.Variables[&quot;foundry-jwt&quot;]).Claims.GetValueOrDefault(&quot;oid&quot;, &quot;-&quot;) != (string)context.Variables[&quot;caller-oid&quot;])">
+          <return-response>
+            <set-status code="401" reason="Unauthorized" />
+            <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
+            <set-body>@(new JObject(new JProperty("error", new JObject(
+                new JProperty("code", "CALLER_MISMATCH"),
+                new JProperty("message", "Authorization and x-foundry-authorization must be tokens of the same identity."),
+                new JProperty("correlationId", context.RequestId.ToString())))).ToString())</set-body>
+          </return-response>
+        </when>
+      </choose>
+      <set-variable name="foundry-token" value="@(context.Request.Headers.GetValueOrDefault(&quot;x-foundry-authorization&quot;, &quot;&quot;))" />
+    </when>
+  </choose>
+  <set-header name="x-foundry-authorization" exists-action="delete" />
   <set-header name="x-ms-user-identity" exists-action="delete" />
   <set-header name="x-ms-user-isolation-key" exists-action="delete" />
 </fragment>

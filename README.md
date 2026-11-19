@@ -97,6 +97,7 @@ as **variables** (not secrets); the jobs pass them to Terraform (`TF_VAR_*`) and
 | `CONTENT_SAFETY_ACCOUNT`, `CONTENT_SAFETY_RESOURCE_GROUP` | Azure AI Content Safety for the prompt checks (required) | `cs-tst-3471ad` |
 | `APP_INSIGHTS_NAME`, `APP_INSIGHTS_RESOURCE_GROUP` | gateway telemetry and token metrics (optional) | `aiazrgtstmodelnpr013471ad` |
 | `PORTAL_ANONYMOUS` | products visible in the portal without sign-in | `false` |
+| `AGENTS_APP_ID` | client ID of the agent app (`scripts/setup_agents_app.py`): audience of agent callers' tokens, named value `agents-app-id`. Also set in the project repository's `agent-<env>` | `AI Gateway Agents (dev)` |
 | `TF_STATE_RESOURCE_GROUP`, `TF_STATE_STORAGE_ACCOUNT`, `TF_STATE_CONTAINER` | Terraform state | `stscbxtf3471ad5a` / `tfstate` |
 
 Repository variable `PLATFORM_ENVIRONMENTS`: the stages the platform deploys to (`dev`). Hosting accounts are the
@@ -112,6 +113,7 @@ folders under `gateway/foundry-accounts/` (`account.yaml`). The project reposito
 | | **Reader** | the Content Safety account | lookup for the backend |
 | | **Storage Blob Data Contributor** | the Terraform state container | state |
 | | Federated credential | the identity, trusting `repo:<owner>@<id>/ai-gateway@<id>:environment:model-<env>` | GitHub OIDC sign-in |
+| | **Owner** of the agent app + Microsoft Graph **Application.ReadWrite.OwnedBy** + role `agents.all` | the agent app (Entra) | the agent pipeline creates agent roles; smoke tests call every agent (`scripts/setup_agents_app.py`) |
 | APIM managed identity (runtime) | **Foundry User** | each hosting account and the agent account | call the models and the agents |
 | | **Cognitive Services User** | the Content Safety account | prompt checks |
 | Platform engineer (platform stack) | Owner, or Contributor + Role Based Access Control Administrator | the platform resource group | create resources and role assignments |
@@ -147,7 +149,7 @@ flowchart TB
   subgraph APIM["APIM instance (one per environment)"]
     direction TB
     subgraph PRODUCTS["Products: what consumers subscribe to"]
-      PA["agents-&lt;env&gt; (e.g. agents-sandbox)<br/>subscription key covers every agent of its projects"]
+      PA["agents-&lt;project&gt;<br/>groups a project's agent API in the Developer Portal (no key needed)"]
       PM["platform-models<br/>model catalog in the Developer Portal"]
     end
     subgraph AGENTAPI["Agent API: one per project<br/>project-&lt;project&gt; · path /ai/&lt;project&gt;<br/>API policy: project quota + fragments project-inbound / project-outbound"]
@@ -162,7 +164,7 @@ flowchart TB
       BE["Backends<br/>model-&lt;account&gt;-&lt;deployment&gt; (one per model)<br/>content-safety"]
     end
   end
-  C(["Caller (app, channel)"]) -->|"subscription key"| OPA
+  C(["Caller (user, app, agent)"]) -->|"Entra token for the agent app, with the agent's role"| OPA
   PA -.-> AGENTAPI
   PM -.-> MODELAPI
   OPA -->|"Foundry Responses API, agent + version pinned"| FP["Foundry project<br/>(agents)"]
@@ -178,7 +180,7 @@ flowchart TB
 ```text
 apim-agents-3471ad
 ├── Products
-│   ├── agents-test ────────────────── APIs: project-models-demo, project-proj-default   (subscription key + Entra token)
+│   ├── agents-<project> ───────────── API: project-<project>   (portal grouping; calls need the agent app token + role, no key)
 │   └── platform-models ────────────── APIs: models-models-demo, models-proj-default     (catalog; project identities only)
 ├── APIs
 │   ├── project-models-demo           /ai/models-demo                 agent API of project models-demo
@@ -194,7 +196,7 @@ apim-agents-3471ad
 ├── Policy fragments                  agent-caller, agent-guardrails, agent-route, project-inbound, project-outbound,
 │                                     model-api-caller, model-api-route, model-content-safety
 ├── Named values
-│   ├── gateway:  ks-gateway-all, gateway-tenant-id
+│   ├── gateway:  ks-gateway-all, gateway-tenant-id, agents-app-id
 │   ├── agents:   ks-agent-<agent>, agent-name-<agent>, agent-version-<agent>   (× 4 agents)
 │   └── models:   ks-model-gpt-5-4-mini, model-meta-gpt-5-4-mini, model-limit-<project>-gpt-5-4-mini
 └── Backends                          model-aif-tst-models-3471ad-gpt-5-4-mini  →  aif-tst-models-3471ad/openai
@@ -209,14 +211,16 @@ apim-agents-3471ad
 | Agent operations | agent | `<agent>-get`, `<agent>-post`, `<agent>-delete` on `/<agent>/*` | `agent-deploy` (`register`) |
 | Agent API policy / operation policy | project / agent | from the project repository's `templates/` | `agent-deploy` (`register`), project repository |
 | `ks-agent-*`, `agent-name-*`, `agent-version-*` | agent | | `agent-deploy` (`register`) |
-| Product `agents-<env>` | as set in `project.yaml` `gateway.product` | e.g. `agents-sandbox` | `agent-deploy` (`register`) |
+| Product `agents-<project>` (portal grouping; no key needed) | as set in `project.yaml` `gateway.product` | e.g. `agents-models-demo` | `agent-deploy` (`register`) |
+| Agent app roles `agent.<project>.all`, `agent.<project>.<agent>` (Entra, not in APIM) | project / agent | | `agent-deploy` (`register`) |
 | Foundry project (in the agent Foundry account, not in APIM) | project | `foundry.project` | use-case onboarding, project repository |
 | Model API + its policy | project | `models-<project>`, path `models/<project>` | use-case onboarding, project repository |
 | `model-limit-<project>-<model>` | project and model | | use-case onboarding, project repository |
 | AI Gateway connection (in the Foundry project, not in APIM) | project | `models.connection`, unique per agent account | use-case onboarding, project repository |
 | Model backend, `ks-model-*`, `model-meta-*` | model | `model-<account>-<deployment>` | `model-platform-deployment` |
 | Product `platform-models` | gateway | | `model-platform-deployment` |
-| Policy fragments, `ks-gateway-all`, `gateway-tenant-id`, backend `content-safety` | gateway | | `gateway-policy-deployment` |
+| Policy fragments, `ks-gateway-all`, `gateway-tenant-id`, `agents-app-id`, backend `content-safety` | gateway | | `gateway-policy-deployment` |
+| Agent app (Entra) and its role `agents.all` | environment | `AI Gateway Agents (<env>)` | tenant admin, once: `scripts/setup_agents_app.py` |
 
 The model deployment itself exists **once** per model in its hosting account; every project's model API routes to
 the same deployment through the same backend. What differs per project is the front door: who may call it, which
@@ -228,18 +232,20 @@ APIM runs the operation policy, which calls the API policy at `<base />`. Thin p
 hold only their own values and include the shared fragments.
 
 ```text
-Agent call   <method> /ai/<project>/<agent>/<the agent's Foundry path>   (subscription key + caller's Entra token)
+Agent call   <method> /ai/<project>/<agent>/<the agent's Foundry path>   (caller's Entra token for the agent app; no key)
              e.g. POST .../basic-code-agent/endpoint/protocols/openai/responses?api-version=v1   (hosted)
                   POST .../demo-assistant/openai/v1/responses                                 (prompt)
 └─ operation policy  <agent>-<method>                       project repository: templates/agent-operation-policy.xml
-   ├─ set variables: agent, kind, ks-agent-<agent>, agent-name, agent-version, rate limit
-   ├─ fragment agent-caller         caller's Entra token (aud https://ai.azure.com) validated, object ID kept
+   ├─ set variables: agent, agent-project, agent-access, kind, ks-agent-<agent>, agent-name, agent-version, rate limit
+   ├─ fragment agent-caller         by the agent's access mode: agent app token + role (role), Foundry token (foundry),
+   │                                or both of the same caller (both); object ID kept
    ├─ fragment agent-guardrails     global kill switch → agent kill switch → agent rate limit
    ├─ quota-by-key                  agent daily quota
    ├─ <base /> ─► API policy  project-<project>             project repository: templates/project-policy.xml
    │              ├─ set variable: project rate limit
    │              ├─ quota-by-key   project daily quota
    │              └─ fragment project-inbound   project rate limit, correlation ID, APIM managed identity
+   │                                            (or the caller's Foundry token: access foundry / both)
    ├─ fragment agent-route          the agent's own Foundry endpoints only (else 404), body/query/headers unchanged;
    │                                prompt: agent_reference = evaluated version; hosted: x-ms-user-identity = caller,
    │                                new sessions bound to the evaluated version (endpoint pinned in Foundry)
@@ -276,6 +282,7 @@ See [Shared policy](#shared-policy-policy-fragments), [Kill switches](#kill-swit
 | `.github/actions/` | shared steps: `setup` (Python, Terraform, Azure sign-in), `tf-init` (state backend) |
 | `scripts/release_plan.py` | which stages run and whether each pipeline has a change (their `plan` job) |
 | `scripts/set_github_environment.sh`, `gateway/scripts/platform_env.py` | setting an environment's GitHub variables; reading them |
+| `scripts/setup_agents_app.py` | one-time Entra setup of an environment's agent app (tenant admin) |
 
 ## Shared policy (policy fragments)
 
@@ -303,10 +310,10 @@ Each agent operation and project API policy only sets its own values as context 
 
 | Fragment | Included by | Does |
 |---|---|---|
-| `agent-guardrails` | agent operation policy, before `<base />` | global kill switch `ks-gateway-all` and agent kill switch (503), agent rate limit |
-| `agent-caller` | agent operation policy, before `<base />` | validates the caller's Entra token (the one it would send to Foundry: audience `https://ai.azure.com`, this tenant); keeps its object ID; removes caller-sent `x-ms-user-identity` / `x-ms-user-isolation-key` |
+| `agent-guardrails` | agent operation policy, before `<base />` | global kill switch `ks-gateway-all` and agent kill switch (503), agent rate limit per caller |
+| `agent-caller` | agent operation policy, before `<base />` | who may call, by the agent's **access mode** (`agent.yaml` `access`). **role** (default): token for the **agent app** (audience = named value `agents-app-id`) with the role `agent.<project>.<agent>`, `agent.<project>.all` or `agents.all`, else `403 AGENT_NOT_ALLOWED`; the token stops at the gateway. **foundry**: the caller's Foundry token (`https://ai.azure.com`), forwarded; Foundry checks the caller's Foundry role. **both**: agent app token with the role **and** the same caller's Foundry token in `x-foundry-authorization` (else 401 / `CALLER_MISMATCH`), forwarded. Always this tenant; keeps the caller's object ID (limits, sessions); removes caller-sent `x-ms-user-identity` / `x-ms-user-isolation-key` |
 | `agent-route` | agent operation policy, after `<base />` | **transparent route**: the caller's Foundry path after `/<project path>/<agent>/` goes to the agent's Foundry endpoint with body, query string and headers unchanged. Hosted: `endpoint/...` only, `x-ms-user-identity` = caller (per-caller sessions), new sessions bound to the evaluated version. Prompt: `openai/v1/responses` and `openai/v1/conversations` only, `agent_reference` = evaluated version. Anything else: `404 AGENT_PATH_NOT_ALLOWED` |
-| `project-inbound` | project API policy | project rate limit, correlation ID (caller's `x-correlation-id`, else its `traceparent` trace ID, else the request ID), managed identity |
+| `project-inbound` | project API policy | project rate limit per caller, Foundry sign-in (APIM's managed identity, or the caller's forwarded Foundry token for `foundry` / `both` agents), correlation ID (caller's `x-correlation-id`, else its `traceparent` trace ID, else the request ID), managed identity |
 | `project-outbound` | project API policy, project model API policy | correlation ID on the response |
 | `model-api-caller` | project model API policy (project repository's use-case onboarding) | only the project's Foundry identity (token claim `xms_mirid`; tenant from named value `gateway-tenant-id`) |
 | `model-api-route` | project model API policy, after its routing table | global kill switch `ks-gateway-all` (503), 404 `MODEL_NOT_ALLOWED`, model kill switch, token limit, backend, managed identity |
@@ -441,7 +448,7 @@ W3C correlation, and logs no headers or bodies):
 | Hop | Fragment | Dimensions |
 |---|---|---|
 | model call | `model-api-route` | `Project`, `Model`, `Hop`=`model` |
-| agent call (Responses) | `agent-route` | `Project`, `Agent`, `Subscription ID` (consumer), `Hop`=`agent` |
+| agent call (Responses) | `agent-route` | `Project`, `Agent`, `Caller` (token object ID), `Hop`=`agent` |
 
 Metric names: `Prompt Tokens`, `Completion Tokens`, `Total Tokens`, plus the cached, reasoning and audio token
 counts the model reports. They are emitted for both agent kinds (prompt and hosted). Use them for showback per
@@ -627,6 +634,14 @@ The change reaches the gateway within seconds. Anyone who can edit the APIM inst
   `apim-agents-3471ad developer portal`); self sign-up with email and password is off. Renew the app secret before
   it expires (November 2027). The sandbox portal (`apim-sbx-bbf0o`) shows the products to anonymous
   visitors too (`portal_anonymous: true`).
+- **Agent app (Entra), once per environment, before the gateway policy:** a tenant admin runs
+  `python3 scripts/setup_agents_app.py <env> <pipeline identity client ID>` and sets the printed client ID as
+  GitHub variable `AGENTS_APP_ID` (here in `model-<env>`, in the project repository in `agent-<env>`). It creates the
+  app registration `AI Gateway Agents (<env>)` (URI `api://ai-gateway-agents-<env>`, v2 tokens, scope
+  `access_as_user` with Azure CLI pre-authorized, **assignment required**), the role `agents.all`, and gives the
+  pipeline identity that role, ownership of the app and Microsoft Graph `Application.ReadWrite.OwnedBy` (so the agent
+  pipeline creates and removes agent roles on this app, and on nothing else). Who holds which agent role is decided
+  outside the pipelines: see the project repository's README, *Access to agents*.
 - **Shared policy fragments:** release the gateway policy to the environment (`gateway-policy-deployment`, stage of that environment) before the first project release there.
 
 ## Environments
