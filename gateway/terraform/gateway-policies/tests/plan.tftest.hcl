@@ -4,6 +4,7 @@
 variables {
   environment                   = "dev"
   tenant_id                     = "fcf67057-50c9-4ad4-98f3-ffca64add9e9"
+  agents_app_id                 = "11111111-2222-3333-4444-555555555555"
   apim_subscription_id          = "00000000-0000-0000-0000-000000000000"
   apim_resource_group           = "rg"
   apim_name                     = "apim"
@@ -92,9 +93,24 @@ run "deploys_shared_policy_fragments" {
   }
 
   assert {
-    condition     = strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<validate-jwt") && strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<audience>https://ai.azure.com</audience>") && strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, "<set-header name=\"x-ms-user-identity\" exists-action=\"delete\" />")
-    error_message = "agent-caller should validate the caller's Foundry token and drop caller-supplied identity headers."
+    condition = alltrue([for x in ["<validate-jwt", "<audience>{{agents-app-id}}</audience>", "<audience>https://ai.azure.com</audience>", "access-gateway", "access-foundry", "agents.all", "AGENT_NOT_ALLOWED", "x-foundry-authorization", "CALLER_MISMATCH", "foundry-token", "<set-header name=\"x-ms-user-identity\" exists-action=\"delete\" />"] :
+    strcontains(azurerm_api_management_policy_fragment.shared["agent-caller"].value, x)])
+    error_message = "agent-caller should require every check in the agent's access list: agent app token with the role (gateway), the caller's Foundry token (foundry), both of the same caller; and drop caller-supplied identity headers."
   }
+  assert {
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["project-inbound"].value, "foundry-token") && strcontains(azurerm_api_management_policy_fragment.shared["project-inbound"].value, "<authentication-managed-identity resource=\"https://ai.azure.com\" />")
+    error_message = "project-inbound should send the caller's Foundry token when agent-caller forwards one, else APIM's managed identity."
+  }
+  assert {
+    condition     = azurerm_api_management_named_value.agents_app_id.name == "agents-app-id" && azurerm_api_management_named_value.agents_app_id.value == "11111111-2222-3333-4444-555555555555"
+    error_message = "agents-app-id should be the environment's agent app (AGENTS_APP_ID)."
+  }
+  assert {
+    condition = alltrue([for id in ["agent-guardrails", "project-inbound"] :
+    strcontains(azurerm_api_management_policy_fragment.shared[id].value, "caller-oid") && !strcontains(azurerm_api_management_policy_fragment.shared[id].value, "context.Subscription")])
+    error_message = "Agent limits should count per caller (token object ID), not per subscription key."
+  }
+
 
   assert {
     condition     = strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "LastOrDefault(m => (string)m[\"role\"] == \"user\")") && strcontains(azurerm_api_management_policy_fragment.shared["model-content-safety"].value, "<set-body>@((string)context.Variables[\"cs-original-body\"])</set-body>")

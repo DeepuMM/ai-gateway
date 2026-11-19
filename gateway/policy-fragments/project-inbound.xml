@@ -1,12 +1,12 @@
 <fragment>
   <!-- Shared by every project API, inbound. Deployed by gateway-policy-deployment (one copy per APIM).
        Reads the context variables set by templates/project-policy.xml:
-         project-rate   calls per minute per consumer across all agents of the project (int)
+         project-rate   calls per minute per caller across all agents of the project (int)
        The project's daily quota is in the project policy itself: quota-by-key accepts no policy expression in calls. -->
 
-  <!-- Project rate limit per consumer, across all agents in the project. -->
+  <!-- Project rate limit per caller (object ID of the token, agent-caller), across all agents in the project. -->
   <rate-limit-by-key calls="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;project-rate&quot;, 0))" renewal-period="60"
-      counter-key="@((context.Subscription?.Id ?? context.Request.IpAddress) + &quot;|project&quot;)"
+      counter-key="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;caller-oid&quot;, context.Request.IpAddress) + &quot;|project&quot;)"
       remaining-calls-header-name="x-ratelimit-remaining-project" retry-after-header-name="Retry-After" />
   <!-- One correlation ID per call: the caller's x-correlation-id, else the trace ID of its W3C traceparent, else the
        gateway's request ID. Sent to Foundry and returned to the caller (project-outbound). traceparent and tracestate
@@ -22,7 +22,17 @@
     <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id"))</value>
   </set-header>
   <!-- The Foundry path is set per call by agent-route (the caller's own Foundry path; transparent gateway). -->
-  <!-- APIM, not the caller, authenticates to Foundry; the caller's key is not passed on. -->
+  <!-- Who Foundry sees: APIM's managed identity (access [gateway]), or the caller's own Foundry token when
+       agent-caller forwards it (access lists foundry: Foundry checks the caller's role). A subscription key is never passed on. -->
   <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
-  <authentication-managed-identity resource="https://ai.azure.com" />
+  <choose>
+    <when condition="@(!string.IsNullOrEmpty(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-token&quot;, &quot;&quot;)))">
+      <set-header name="Authorization" exists-action="override">
+        <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("foundry-token"))</value>
+      </set-header>
+    </when>
+    <otherwise>
+      <authentication-managed-identity resource="https://ai.azure.com" />
+    </otherwise>
+  </choose>
 </fragment>
