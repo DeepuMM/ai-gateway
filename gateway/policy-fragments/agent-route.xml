@@ -38,9 +38,9 @@
     <!-- hosted agent: its own endpoint surface only -->
     <when condition="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-kind&quot;) == &quot;hosted&quot; &amp;&amp; context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;).StartsWith(&quot;endpoint/&quot;))">
       <rewrite-uri template="@(&quot;/agents/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-name&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-path&quot;) + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;agent-query&quot;))" copy-unmatched-params="false" />
-      <!-- per-caller isolation of sessions and conversations when Foundry sees APIM (access [gateway]; needs
-           UserIdentityImpersonation for APIM's identity). With the caller's own token (access lists foundry)
-           Foundry already knows the caller. -->
+      <!-- per-caller isolation of sessions and conversations when Foundry sees APIM (gateway token; needs
+           UserIdentityImpersonation for APIM's identity). With the caller's own Foundry token Foundry already knows
+           the caller. -->
       <choose>
         <when condition="@(string.IsNullOrEmpty(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-token&quot;, &quot;&quot;)))">
           <set-header name="x-ms-user-identity" exists-action="override">
