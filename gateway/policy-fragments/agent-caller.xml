@@ -25,7 +25,8 @@
     if (!(bool)context.Variables[&quot;access-foundry&quot;]) { return false; }
     if (!(bool)context.Variables[&quot;access-gateway&quot;]) { return true; }
     var jwt = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;).Split(' ').Last().AsJwt();
-    return jwt != null &amp;&amp; jwt.Audiences.Any(a => a == &quot;https://ai.azure.com&quot;);
+    var foundry = &quot;https:&quot; + &quot;/&quot; + &quot;/ai.azure.com&quot;;   // written in parts: APIM reads a double slash as a comment
+    return jwt != null &amp;&amp; jwt.Audiences.Any(a => a == foundry);
   }" />
   <choose>
     <!-- the caller's Foundry token -->
