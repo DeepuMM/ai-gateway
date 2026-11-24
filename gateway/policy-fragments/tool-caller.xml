@@ -1,37 +1,58 @@
 <fragment>
   <!-- Shared by every tool API (tools/<project>/<tool>), inbound, first. Deployed by gateway-policy-deployment.
-       A tool belongs to a project. Foundry calls it through the project's RemoteTool connection with the calling
-       project's managed identity: an Entra token for https://cognitiveservices.azure.com from this environment's tenant
-       (named value gateway-tenant-id) whose xms_mirid claim is the calling project's resource ID. Only the owning
-       project and the projects it shares the tool with (tool.yaml shared_with) are accepted.
-       Reads the context variable set by the tool's policy (agent-deployment onboarding/terraform/policies/tool-api.xml.tftpl):
-         tool-callers  resource IDs of the projects that may call, separated by "|"
-       Sets: caller-mirid (the calling project's resource ID, lowercase), used by tool-route for its rate counter. -->
-  <validate-azure-ad-token tenant-id="{{gateway-tenant-id}}" header-name="Authorization"
-      failed-validation-httpcode="401" failed-validation-error-message="Only the identity of a project this tool is shared with may call it."
-      output-token-variable-name="caller-token">
+       Who may call a tool: the AGENT, not its project. A tool belongs to a project. Foundry calls it through the
+       calling project's RemoteTool connection with authType AgenticIdentityToken, so the token is the calling agent's
+       own Entra agent identity (one per agent), for the gateway's agent app (named value agents-app-id; audience
+       api://<client ID>). The call goes through only if the token's roles claim holds tool.<project>.<tool> or
+       tool.<project>.all. The tool's owner decides which agents' identities hold the role (outside the pipelines,
+       like the agent roles). An agent without any role on the agent app gets no token at all (assignment required).
+         401  no valid token for the agent app from this tenant (for example the project's identity)
+         403  CALLER_NOT_ALLOWED: a valid token without the tool's role
+       Reads the context variables set by the tool's policy (agent-deployment tool-deploy/terraform/policies/tool-api.xml.tftpl):
+         project, tool   the owning project and the tool
+       Sets: caller-oid (the calling agent's identity), used by tool-route for its rate counter. -->
+  <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer"
+      failed-validation-error-message="Only an agent identity holding this tool's role on the AI gateway's agent app may call it (Foundry connection authType AgenticIdentityToken, audience api://{{agents-app-id}})."
+      output-token-variable-name="caller-jwt">
+    <openid-config url="https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0/.well-known/openid-configuration" />
     <audiences>
-      <audience>https://cognitiveservices.azure.com</audience>
+      <audience>{{agents-app-id}}</audience>
+      <audience>api://{{agents-app-id}}</audience>
     </audiences>
-  </validate-azure-ad-token>
-  <set-variable name="caller-mirid" value="@(((Jwt)context.Variables[&quot;caller-token&quot;]).Claims.GetValueOrDefault(&quot;xms_mirid&quot;, &quot;&quot;).ToLowerInvariant())" />
+    <issuers>
+      <issuer>https://login.microsoftonline.com/{{gateway-tenant-id}}/v2.0</issuer>
+      <issuer>https://sts.windows.net/{{gateway-tenant-id}}/</issuer>
+    </issuers>
+  </validate-jwt>
+  <set-variable name="caller-oid" value="@(((Jwt)context.Variables[&quot;caller-jwt&quot;]).Claims.GetValueOrDefault(&quot;oid&quot;, &quot;&quot;).ToLowerInvariant())" />
   <choose>
     <when condition="@{
-      var caller = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;caller-mirid&quot;, &quot;&quot;);
-      var allowed = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool-callers&quot;, &quot;&quot;).ToLowerInvariant().Split('|');
-      return caller.Length == 0 || !allowed.Contains(caller);
+      var jwt = (Jwt)context.Variables[&quot;caller-jwt&quot;];
+      var roles = jwt.Claims.ContainsKey(&quot;roles&quot;) ? jwt.Claims[&quot;roles&quot;] : new string[0];
+      var project = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;);
+      var tool = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool&quot;, &quot;&quot;);
+      var allowed = new[] { &quot;tool.&quot; + project + &quot;.&quot; + tool, &quot;tool.&quot; + project + &quot;.all&quot; };
+      return project == &quot;&quot; || tool == &quot;&quot; || ((string)context.Variables[&quot;caller-oid&quot;]).Length == 0 || !roles.Any(r => allowed.Contains(r, StringComparer.OrdinalIgnoreCase));
     }">
       <return-response>
-        <set-status code="401" reason="Unauthorized" />
+        <set-status code="403" reason="Forbidden" />
         <set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header>
-        <set-body>{"error":{"code":"CALLER_NOT_ALLOWED","message":"Only the identity of a project this tool is shared with may call it."}}</set-body>
+        <set-body>@{
+          var project = context.Variables.GetValueOrDefault&lt;string&gt;("project", "");
+          var tool = context.Variables.GetValueOrDefault&lt;string&gt;("tool", "");
+          return new JObject(
+            new JProperty("error", new JObject(
+              new JProperty("code", "CALLER_NOT_ALLOWED"),
+              new JProperty("message", "This agent's identity holds no role for this tool. Ask its owner for role tool." + project + "." + tool + " on the AI gateway's agent app."),
+              new JProperty("correlationId", context.RequestId.ToString())))).ToString();
+        }</set-body>
       </return-response>
     </when>
   </choose>
   <set-header name="x-correlation-id" exists-action="skip">
     <value>@(context.RequestId.ToString())</value>
   </set-header>
-  <!-- The project's token is for the gateway only: it never reaches the tool. Backend authentication, when the tool
+  <!-- The agent's token is for the gateway only: it never reaches the tool. Backend authentication, when the tool
        needs it, is APIM's own managed identity (the tool's policy), granted by the team that owns the tool. -->
   <set-header name="Authorization" exists-action="delete" />
 </fragment>

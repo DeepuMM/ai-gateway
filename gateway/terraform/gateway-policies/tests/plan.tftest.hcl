@@ -118,8 +118,8 @@ run "deploys_shared_policy_fragments" {
   }
 
   assert {
-    condition     = strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "<audience>https://cognitiveservices.azure.com</audience>") && strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "tool-callers") && strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "<set-header name=\"Authorization\" exists-action=\"delete\" />")
-    error_message = "tool-caller should accept only the projects the tool is shared with and never pass their token to the tool."
+    condition     = strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "<audience>{{agents-app-id}}</audience>") && strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "&quot;tool.&quot; + project + &quot;.&quot; + tool") && !strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "tool-callers") && strcontains(azurerm_api_management_policy_fragment.shared["tool-caller"].value, "<set-header name=\"Authorization\" exists-action=\"delete\" />")
+    error_message = "tool-caller should accept only an agent identity holding the tool role (token for the agent app) and never pass its token to the tool."
   }
 
   assert {
