@@ -5,7 +5,7 @@
          tool         tool name (folder projects/<project>/tools/<tool>/)
          tool-status  value of named value ks-tool-<project>-<tool> (the tool's kill switch)
          tool-names   the MCP tools the owning team exposes (tool.yaml tools[].name), separated by "|"
-         tool-rate    calls per minute per calling project (int) -->
+         tool-rate    calls per minute per calling agent (int) -->
 
   <!-- Kill switches: the global one (ks-gateway-all) and the tool's own. Anything other than "active" stops the tool
        for every agent at once (fails closed). -->
@@ -20,9 +20,9 @@
     </when>
   </choose>
 
-  <!-- Calls per minute per calling project. -->
+  <!-- Calls per minute per calling agent (its identity). -->
   <rate-limit-by-key calls="@(context.Variables.GetValueOrDefault&lt;int&gt;(&quot;tool-rate&quot;, 0))" renewal-period="60"
-      counter-key="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;caller-mirid&quot;, &quot;&quot;) + &quot;|&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool&quot;, &quot;&quot;))"
+      counter-key="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;caller-oid&quot;, &quot;&quot;) + &quot;|&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;project&quot;, &quot;&quot;) + &quot;/&quot; + context.Variables.GetValueOrDefault&lt;string&gt;(&quot;tool&quot;, &quot;&quot;))"
       remaining-calls-header-name="x-ratelimit-remaining-tool" retry-after-header-name="Retry-After" />
 
   <!-- Exposed tools only. MCP calls a tool with the JSON-RPC method tools/call and the tool's name in params.name.
