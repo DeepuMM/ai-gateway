@@ -53,14 +53,27 @@ locals {
     }
   }
 
-  # Developer Portal: catalog of every model on the product page (markdown).
+  # Developer Portal: the model catalog is the description of the API "Model catalog" (its own page; an API
+  # description has no length limit, a product description 1,000 characters): a table of every model, then each
+  # model's card (its docs.md, headings one level down). The product description stays short and points to it.
+  model_cards = {
+    for name, m in local.models : name =>
+    replace(trimspace(replace(file("${local.accounts_dir}/${m.account}/models/${name}/${m.docs_file}"), "/^#[^\n]*\n/", "")), "/(?m)^#/", "###")
+  }
   catalog = join("\n", concat([
     "Models served by the AI gateway. A project reaches them through its own model API (`models/<project>`); its agents use `<connection>/<model>`, where `<connection>` is the project's own connection name (`models.connection` in its `project.yaml`).",
     "",
-    "**Request a model:** add it to `models.allowed` in your project's `project.yaml`, with tokens per minute and per day; the platform team approves the pull request.",
+    "**Request a model:** add it to `models.allowed` in your project's `project.yaml`, with tokens per minute and per day; the platform team approves the pull request. A model that isn't listed here needs approval first: ask the platform team.",
     "",
     "| Model | Status | Region | Content safety | Capacity (TPM) | Use in an agent |",
     "|---|---|---|---|---|---|",
-    ], [for n, r in local.registry : "| **${n}**: ${r.summary} | ${r.status} | ${r.region} | ${r.guardrail} | ${r.capacity_tpm} | `<connection>/${n}` |"]
+    ], [for n, r in local.registry : "| **${n}**: ${r.summary} | ${r.status} | ${r.region} | ${r.guardrail} | ${r.capacity_tpm} | `<connection>/${n}` |"],
+    flatten([for n in sort(keys(local.models)) : ["", "## ${n}", "", local.model_cards[n]]])
   ))
+  catalog_api = "model-catalog"
+  product_description = join("\n", [
+    "Models served by the AI gateway, for agents of onboarded projects. Each project reaches them through its own model API (`models/<project>`).",
+    "",
+    "**Every model, with its status, region, content safety, capacity and model card: see the API _Model catalog_ in this product.**",
+  ])
 }

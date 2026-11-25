@@ -49,3 +49,28 @@ run "registers_each_model" {
     error_message = "Kill switch starts active."
   }
 }
+
+run "catalog_page" {
+  command = plan
+
+  override_resource {
+    target = azurerm_cognitive_deployment.model
+  }
+
+  assert {
+    condition     = length(azurerm_api_management_product.models.description) <= 1000
+    error_message = "APIM limits a product description to 1,000 characters; the catalog belongs in the Model catalog API."
+  }
+  assert {
+    condition     = strcontains(azurerm_api_management_api.catalog.description, "| **gpt-5.4-mini**:") && strcontains(azurerm_api_management_api.catalog.description, "## gpt-5.4-mini")
+    error_message = "The Model catalog API should list every model in the table and with its model card."
+  }
+  assert {
+    condition     = !strcontains(azurerm_api_management_api.catalog.description, "\n# ")
+    error_message = "Model card titles should be removed and headings moved one level down."
+  }
+  assert {
+    condition     = azurerm_api_management_product_api.catalog.product_id == "platform-models"
+    error_message = "The Model catalog API should be in the platform-models product."
+  }
+}
