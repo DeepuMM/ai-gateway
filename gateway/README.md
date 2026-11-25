@@ -79,7 +79,7 @@ flowchart TD
   I --> P["Plan + validation<br/>accounts with environment: &lt;env&gt; · name = folder · format allowed · api/status valid"]
   P -->|pull request| S1([Stop: plan in the run summary])
   P -->|merge / tag / manual| A1["Apply"]
-  A1 --> R1["Model deployment in the hosting account<br/>APIM backend · registry model-meta-* · kill switch ks-model-* · product + catalog"]
+  A1 --> R1["Model deployment in the hosting account<br/>APIM backend · registry model-meta-* · kill switch ks-model-* · product + Model catalog page"]
   R1 --> SM["Smoke test: deployment Succeeded · backend registered · kill switch set"]
   SM --> PP["Publish Developer Portal (retries if busy)"]
 ```
@@ -90,7 +90,7 @@ flowchart TD
 | Plan (`plan` job) | which jobs run in the stage | — |
 | Sign in + init | GitHub OIDC as the environment's pipeline identity; Terraform state in the environment's storage (GitHub variables) | the identity or its federated credential is missing |
 | Plan | computes the changes for the hosting accounts of the stage's environment and checks every `model.yaml` | does not fail on a bad `model.yaml` today: the checks only warn (see Validation) |
-| Apply | deploys or updates each model in its hosting account; creates or updates its backend, registry entry, kill switch (only created, never re-enabled) and the product with the catalog | Azure refuses (quota, permissions) |
+| Apply | deploys or updates each model in its hosting account; creates or updates its backend, registry entry, kill switch (only created, never re-enabled) the product and the Model catalog page | Azure refuses (quota, permissions) |
 | Smoke test | reads the registry back from APIM and checks each model's deployment, backend and kill switch | a deployment isn't `Succeeded`, a backend is missing |
 | Portal | publishes the Developer Portal | the portal is disabled on the APIM instance |
 
@@ -112,7 +112,7 @@ flowchart TD
 
 | What developers see | Where it comes from |
 |---|---|
-| Product **Platform models**: catalog of every model (summary, status, region, content safety, capacity, name to use in an agent) | model platform deployment: the first paragraph of each `docs.md` (stored in the registry as `summary`) |
+| API **Model catalog** (in the product Platform models): every model in a table (summary, status, region, content safety, capacity, name to use in an agent), then each model's card. It has no operations: it is only a page. The product's own description is short and points to it, because APIM limits a product description to 1,000 characters | model platform deployment: each model's `docs.md` (its first paragraph is stored in the registry as `summary`) |
 | API **Models - &lt;project&gt;**: the project's models with its limits, and the chat completions reference (parameters, request example, error codes) | use-case onboarding (project repository): OpenAPI spec generated from the registry and `project.yaml` |
 
 Model platform deployment and the project repository's pipelines publish the portal after each apply (`gateway/scripts/publish_portal.py`, which retries when another
@@ -174,7 +174,7 @@ into an agent account.
 | APIM backend | `model-<account>-<deployment>` | `https://<account>.cognitiveservices.azure.com/openai` |
 | Registry entry | named value `model-meta-<model>` | see above |
 | Kill switch | named value `ks-model-<model>` | created `active`; later changes are never overwritten by an apply |
-| Product | `platform-models` (GitHub variable `MODELS_PRODUCT`) | catalog of every model in its description; visible to the Developers group; every project's model API is added to it |
+| Product | `platform-models` (GitHub variable `MODELS_PRODUCT`) | short description pointing to the API Model catalog; visible to the Developers group; holds the Model catalog API, and every project's model API is added to it |
 
 ### Validation in the plan
 

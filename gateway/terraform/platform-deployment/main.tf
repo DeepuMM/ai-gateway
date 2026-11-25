@@ -103,7 +103,7 @@ resource "azurerm_api_management_named_value" "kill_switch" {
 resource "azurerm_api_management_product" "models" {
   product_id            = local.env.gateway.models_product
   display_name          = "Platform models"
-  description           = local.catalog
+  description           = local.product_description # at most 1,000 characters (APIM); the catalog is the API below
   api_management_name   = data.azurerm_api_management.this.name
   resource_group_name   = data.azurerm_api_management.this.resource_group_name
   subscription_required = true
@@ -125,6 +125,28 @@ resource "azurerm_api_management_product_group" "guests" {
   count               = try(local.env.gateway.portal_anonymous, false) ? 1 : 0
   product_id          = azurerm_api_management_product.models.product_id
   group_name          = "guests"
+  api_management_name = data.azurerm_api_management.this.name
+  resource_group_name = data.azurerm_api_management.this.resource_group_name
+}
+
+## Model catalog page in the Developer Portal: an API with no operations (nothing to call), whose description is the
+## catalog. An API description has no length limit, so the catalog grows with the models.
+
+resource "azurerm_api_management_api" "catalog" {
+  name                  = local.catalog_api
+  display_name          = "Model catalog"
+  description           = local.catalog
+  path                  = "catalog/models"
+  protocols             = ["https"]
+  revision              = "1"
+  subscription_required = true
+  api_management_name   = data.azurerm_api_management.this.name
+  resource_group_name   = data.azurerm_api_management.this.resource_group_name
+}
+
+resource "azurerm_api_management_product_api" "catalog" {
+  product_id          = azurerm_api_management_product.models.product_id
+  api_name            = azurerm_api_management_api.catalog.name
   api_management_name = data.azurerm_api_management.this.name
   resource_group_name = data.azurerm_api_management.this.resource_group_name
 }

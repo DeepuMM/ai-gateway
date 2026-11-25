@@ -49,7 +49,7 @@ shared policy, or the environment's models), so a stage is a single box, not a m
 | Pipeline | What it does | Terraform state |
 |---|---|---|
 | `gateway-policy-deployment`: the shared gateway policy | the **policy fragments** in `gateway/policy-fragments/` (kill switches, limits, routing, identity checks, content safety) that every project's agent, model and tool API includes; the **global kill switch** `ks-gateway-all` (created `active` once); the named value `gateway-tenant-id`; the **Content Safety backend** `content-safety` (managed identity); the gateway's Application Insights logger. A change reaches every project of the environment at once, with no project redeployed. Smoke test: every fragment is on the gateway, the global kill switch state, the model registry | `ai-gateway-policies-<env>.tfstate` |
-| `model-platform-deployment`: host the models | for each model of the environment's hosting accounts (`gateway/foundry-accounts/<account>/` with `environment: <env>`): the deployment (version, SKU, capacity) with its **guardrail**, an APIM **backend**, a **registry entry** `model-meta-<model>`, a **kill switch** `ks-model-<model>` (created `active` once), the model in the `platform-models` **catalog**. Smoke test (deployment healthy, backend registered, kill switch set), then the Developer Portal. **It creates no API anyone can call:** each project gets its own model API, `models/<project>`, from use-case onboarding in the project repository | `ai-gateway-models-<env>.tfstate` |
+| `model-platform-deployment`: host the models | for each model of the environment's hosting accounts (`gateway/foundry-accounts/<account>/` with `environment: <env>`): the deployment (version, SKU, capacity) with its **guardrail**, an APIM **backend**, a **registry entry** `model-meta-<model>`, a **kill switch** `ks-model-<model>` (created `active` once), the `platform-models` product and its **catalog page** (API *Model catalog*: every model and its model card). Smoke test (deployment healthy, backend registered, kill switch set), then the Developer Portal. **It creates no API anyone can call:** each project gets its own model API, `models/<project>`, from use-case onboarding in the project repository | `ai-gateway-models-<env>.tfstate` |
 
 **When a run stops, nothing has changed yet** if it stops in a plan: a fragment file doesn't start with `<fragment>`,
 or the environment has no Content Safety account. During an apply, Azure can refuse a change (an invalid policy, no
@@ -150,7 +150,7 @@ flowchart TB
     direction TB
     subgraph PRODUCTS["Products: what consumers subscribe to"]
       PA["agents-&lt;project&gt;<br/>groups a project's agent API in the Developer Portal (no key needed)"]
-      PM["platform-models<br/>model catalog in the Developer Portal"]
+      PM["platform-models<br/>Model catalog page in the Developer Portal"]
     end
     subgraph AGENTAPI["Agent API: one per project<br/>project-&lt;project&gt; · path /ai/&lt;project&gt;<br/>API policy: project quota + fragments project-inbound / project-outbound"]
       OPA["Operations: three per agent<br/>GET · POST · DELETE /&lt;agent&gt;/* (the agent's Foundry path follows)<br/>operation policy: agent values + fragments agent-caller / agent-guardrails / agent-route"]
@@ -181,7 +181,7 @@ flowchart TB
 apim-agents-3471ad
 ├── Products
 │   ├── agents-<project> ───────────── API: project-<project>   (portal grouping; calls need the agent app token + role, no key)
-│   └── platform-models ────────────── APIs: models-models-demo, models-proj-default     (catalog; project identities only)
+│   └── platform-models ────────────── APIs: model-catalog (page only), models-models-demo, models-proj-default     (project identities only)
 ├── APIs
 │   ├── project-models-demo           /ai/models-demo                 agent API of project models-demo
 │   │   ├── basic-code-agent-{get,post,delete}   /basic-code-agent/*    hosted (code) agent
@@ -475,7 +475,7 @@ the same policies, per project and per model, and adds what the import doesn't h
 | Token limit / quota (`llm-token-limit`) | one per API | per project and model, shares checked against the model's capacity |
 | Token metrics (`llm-emit-token-metric`) | per API | per project/model and per project/agent/consumer |
 | Content safety (`llm-content-safety`) | one setting per API | platform default + stricter per project/model; checks the latest user message (see above) |
-| Kill switches, registry, catalog, agent APIs | – | global/model/agent switches, `model-meta-*`, catalog page, transparent agent APIs |
+| Kill switches, registry, catalog, agent APIs | – | global/model/agent switches, `model-meta-*`, catalog page (API `model-catalog`), transparent agent APIs |
 | How | portal wizard, by hand | Git and pipelines, per environment |
 
 Answer checks (`enforce-on-completions`) are available per project, off by default (see Answer checks).
